@@ -23,6 +23,7 @@ data class VpnServerEntity(
     val comment: String,
     val openVpnConfigData: String?,
     val softEtherTcpPort: Int?,
+    val softEtherUdpPort: Int? = null,
     val softEtherUdpSupported: Boolean,
     val l2tpSupported: Boolean,
     val openVpnTcpPort: Int?,
@@ -30,6 +31,7 @@ data class VpnServerEntity(
     val sstpHostname: String?,
     val sstpPort: Int?,
     val source: String,
+    val sourceUrl: String? = null,
     val lastSeenTime: Long
 ) {
     fun toDomain(): VpnServer {
@@ -51,6 +53,7 @@ data class VpnServerEntity(
             comment = comment,
             openVpnConfigData = openVpnConfigData,
             softEtherTcpPort = softEtherTcpPort,
+            softEtherUdpPort = softEtherUdpPort,
             softEtherUdpSupported = softEtherUdpSupported,
             l2tpSupported = l2tpSupported,
             openVpnTcpPort = openVpnTcpPort,
@@ -58,6 +61,7 @@ data class VpnServerEntity(
             sstpHostname = sstpHostname,
             sstpPort = sstpPort,
             source = source,
+            sourceUrl = sourceUrl,
             lastSeenTime = lastSeenTime
         )
     }
@@ -82,6 +86,7 @@ data class VpnServerEntity(
                 comment = server.comment,
                 openVpnConfigData = server.openVpnConfigData,
                 softEtherTcpPort = server.softEtherTcpPort,
+                softEtherUdpPort = server.softEtherUdpPort,
                 softEtherUdpSupported = server.softEtherUdpSupported,
                 l2tpSupported = server.l2tpSupported,
                 openVpnTcpPort = server.openVpnTcpPort,
@@ -89,6 +94,7 @@ data class VpnServerEntity(
                 sstpHostname = server.sstpHostname,
                 sstpPort = server.sstpPort,
                 source = server.source,
+                sourceUrl = server.sourceUrl,
                 lastSeenTime = server.lastSeenTime
             )
         }

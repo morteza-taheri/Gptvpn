@@ -18,6 +18,7 @@ data class VpnServer(
     val comment: String = "",
     val openVpnConfigData: String? = null,
     val softEtherTcpPort: Int? = null,
+    val softEtherUdpPort: Int? = null,
     val softEtherUdpSupported: Boolean = false,
     val l2tpSupported: Boolean = false,
     val openVpnTcpPort: Int? = null,
@@ -25,6 +26,9 @@ data class VpnServer(
     val sstpHostname: String? = null,
     val sstpPort: Int? = null,
     val source: String = "VPNGate",
+    val sourceUrl: String? = null,
+    val sourceIds: List<String> = emptyList(),
+    val sourceCount: Int = 1,
     val lastSeenTime: Long = System.currentTimeMillis()
 ) {
     val speedMbps: Double
