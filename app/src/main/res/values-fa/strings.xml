@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">VpnM Pro</string>
+    <!-- SoftEther VPN State Strings -->
+    <string name="softether_connecting">در حال اتصال به SoftEther…</string>
+    <string name="softether_tls_handshake">در حال برقراری دست‌تکانی امن TLS…</string>
+    <string name="softether_protocol_handshake">در حال مذاکره پروتکل SoftEther…</string>
+    <string name="softether_authenticating">در حال احراز هویت نشست SoftEther…</string>
+    <string name="softether_session_setup">در حال راه‌اندازی نشست SoftEther…</string>
+    <string name="softether_connected">متصل شد به SoftEther با آی‌پی: %1$s</string>
+    <string name="softether_disconnecting">در حال قطع اتصال…</string>
+    <string name="softether_disconnected">اتصال SoftEther قطع شد</string>
+    <string name="softether_disconnected_by_error">اتصال SoftEther به دلیل خطا قطع شد</string>
+    
+    <!-- Notification Strings -->
+    <string name="softether_vpn_service">سرویس SoftEther VPN</string>
+    <string name="softether_vpn_connection_status">وضعیت اتصال SoftEther VPN</string>
+    <string name="softether_disconnect">قطع اتصال</string>
+    
+    <!-- Server Information Format -->
+    <string name="softether_notification_title">SoftEther VPN - %1$s</string>
+    <string name="softether_notification_title_notconnect">SoftEther VPN</string>
+    <string name="softether_channel_name_error">خطای SoftEther VPN</string>
+    <string name="softether_channel_description_error">اعلان‌های خطای SoftEther VPN</string>
+    <string name="softether_notification_disconnected_error">اتصال SoftEther VPN به دلیل بروز خطا قطع شد</string>
+    <string name="softether_statusline_bytecount">↓%1$s %2$s - ↑%3$s %4$s</string>
+</resources>
