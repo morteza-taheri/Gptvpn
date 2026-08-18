@@ -288,10 +288,10 @@ class SoftEtherVpnService : VpnService() {
 
             val channel = NotificationChannel(
                 channelId,
-                getString(R.string.softether_channel_name_error),
+                getAppString("softether_channel_name_error", "SoftEther VPN Error"),
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = getString(R.string.softether_channel_description_error)
+                description = getAppString("softether_channel_description_error", "Notifications for SoftEther VPN errors")
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 250, 250, 250)
                 
@@ -337,8 +337,8 @@ class SoftEtherVpnService : VpnService() {
 
         val builder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(getString(R.string.softether_channel_name_error))
-            .setContentText(getString(R.string.softether_notification_disconnected_error))
+            .setContentTitle(getAppString("softether_channel_name_error", "SoftEther VPN Error"))
+            .setContentText(getAppString("softether_notification_disconnected_error", "SoftEther VPN disconnected due to error"))
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setDefaults(Notification.DEFAULT_ALL)
             .setVibrate(longArrayOf(0, 250, 250, 250)) // Explicitly set on builder too for pre-O
@@ -357,7 +357,7 @@ class SoftEtherVpnService : VpnService() {
         startForeground(
             NOTIFICATION_ID,
             createNotification(
-                if (isDisconnectAction) getString(R.string.softether_disconnecting) else getString(R.string.softether_connecting),
+                if (isDisconnectAction) getAppString("softether_disconnecting", "Disconnecting SoftEther…") else getAppString("softether_connecting", "Connecting SoftEther…"),
                 !isDisconnectAction
             )
         )
@@ -562,8 +562,8 @@ class SoftEtherVpnService : VpnService() {
         )
 
         val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setContentTitle(getString(R.string.softether_vpn_service))
-            .setContentText(getString(R.string.softether_disconnected))
+            .setContentTitle(getAppString("softether_vpn_service", "SoftEther VPN"))
+            .setContentText(getAppString("softether_disconnected", "Disconnected SoftEther"))
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(contentPendingIntent)
             .setOngoing(false)  // Dismissable
@@ -740,9 +740,9 @@ class SoftEtherVpnService : VpnService() {
         )
 
         val notificationTitle = if (!currentSessionName.isNullOrEmpty()) {
-            getString(R.string.softether_notification_title, currentSessionName)
+            getAppString("softether_notification_title", "SoftEther VPN - %1\$s", currentSessionName!!)
         } else {
-            getString(R.string.softether_notification_title_notconnect)
+            getAppString("softether_notification_title_notconnect", "SoftEther VPN")
         }
 
         val builder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
@@ -763,7 +763,7 @@ class SoftEtherVpnService : VpnService() {
             )
             builder.addAction(
                 android.R.drawable.ic_menu_close_clear_cancel,
-                getString(R.string.softether_disconnect),
+                getAppString("softether_disconnect", "Disconnect"),
                 disconnectPendingIntent
             )
         }
@@ -802,8 +802,9 @@ class SoftEtherVpnService : VpnService() {
     }
 
     private fun formatTrafficSnapshot(snapshot: SoftEtherTrafficSnapshot): String {
-        return getString(
-            R.string.softether_statusline_bytecount,
+        return getAppString(
+            "softether_statusline_bytecount",
+            "↓%1\$s %2\$s - ↑%3\$s %4\$s",
             humanReadableByteCount(snapshot.inBytesPerSecond(), true),
             humanReadableByteCount(snapshot.inBytes, false),
             humanReadableByteCount(snapshot.outBytesPerSecond(), true),
@@ -862,18 +863,18 @@ class SoftEtherVpnService : VpnService() {
         }
 
         val message = when (state) {
-            ConnectionState.CONNECTING -> getString(R.string.softether_connecting)
-            ConnectionState.TLS_HANDSHAKE -> getString(R.string.softether_tls_handshake)
-            ConnectionState.PROTOCOL_HANDSHAKE -> getString(R.string.softether_protocol_handshake)
-            ConnectionState.AUTHENTICATING -> getString(R.string.softether_authenticating)
-            ConnectionState.SESSION_SETUP -> getString(R.string.softether_session_setup)
+            ConnectionState.CONNECTING -> getAppString("softether_connecting", "Connecting SoftEther…")
+            ConnectionState.TLS_HANDSHAKE -> getAppString("softether_tls_handshake", "Establishing SoftEther TLS handshake…")
+            ConnectionState.PROTOCOL_HANDSHAKE -> getAppString("softether_protocol_handshake", "Negotiating SoftEther protocol…")
+            ConnectionState.AUTHENTICATING -> getAppString("softether_authenticating", "Authenticating SoftEther session…")
+            ConnectionState.SESSION_SETUP -> getAppString("softether_session_setup", "Establishing SoftEther session…")
             ConnectionState.CONNECTED -> {
                 val displayIp = controller?.assignedLocalIp ?: hostname
-                getString(R.string.softether_connected, displayIp)
+                getAppString("softether_connected", "Connected SoftEther with IP: %1\$s", displayIp)
             }
-            ConnectionState.DISCONNECTING -> getString(R.string.softether_disconnecting)
-            ConnectionState.DISCONNECTED -> getString(R.string.softether_disconnected)
-            ConnectionState.ERROR -> getString(R.string.softether_disconnected_by_error)
+            ConnectionState.DISCONNECTING -> getAppString("softether_disconnecting", "Disconnecting SoftEther…")
+            ConnectionState.DISCONNECTED -> getAppString("softether_disconnected", "Disconnected SoftEther")
+            ConnectionState.ERROR -> getAppString("softether_disconnected_by_error", "Disconnected SoftEther because of error")
         }
 
         // Don't show the disconnect action button when we're already disconnecting
@@ -951,6 +952,23 @@ class SoftEtherVpnService : VpnService() {
             unregisterReceiver(networkReceiver)
         } catch (e: IllegalArgumentException) {
             // Receiver was not registered
+        }
+    }
+
+    private fun getAppString(name: String, fallback: String, vararg formatArgs: Any): String {
+        val resId = try {
+            resources.getIdentifier(name, "string", packageName)
+        } catch (_: Exception) {
+            0
+        }
+        return if (resId != 0) {
+            try {
+                if (formatArgs.isNotEmpty()) getString(resId, *formatArgs) else getString(resId)
+            } catch (_: Exception) {
+                if (formatArgs.isNotEmpty()) String.format(fallback, *formatArgs) else fallback
+            }
+        } else {
+            if (formatArgs.isNotEmpty()) String.format(fallback, *formatArgs) else fallback
         }
     }
 }
