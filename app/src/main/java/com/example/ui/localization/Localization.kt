@@ -100,7 +100,19 @@ data class Strings(
     val serverAuthMethodHint: String,
     val serverProtocolHint: String,
     val cancel: String,
-    val addAndConnect: String
+    val addAndConnect: String,
+    val developerModeTitle: String,
+    val developerModeSubtitle: String,
+    val developerModeToggle: String,
+    val mtuLabel: String,
+    val bufferSizeLabel: String,
+    val maxConnectionsLabel: String,
+    val flushStrategyLabel: String,
+    val packetLogLevelLabel: String,
+    val statsIntervalLabel: String,
+    val performanceStatsToggle: String,
+    val resetDeveloperDefaults: String,
+    val liveDiagnosticsTitle: String
 )
 
 object Localization {
@@ -204,7 +216,19 @@ object Localization {
         serverAuthMethodHint = "Auth Method",
         serverProtocolHint = "Protocol",
         cancel = "Cancel",
-        addAndConnect = "Add & Connect"
+        addAndConnect = "Add & Connect",
+        developerModeTitle = "Developer / Performance Tuning",
+        developerModeSubtitle = "Tune TUN buffer, MTU, multi-connection, and live pipeline diagnostics",
+        developerModeToggle = "Enable Developer Mode",
+        mtuLabel = "TUN Interface MTU",
+        bufferSizeLabel = "I/O Buffer Size",
+        maxConnectionsLabel = "Max SoftEther TCP Connections",
+        flushStrategyLabel = "TUN Flush Strategy",
+        packetLogLevelLabel = "Packet Logging Detail",
+        statsIntervalLabel = "Diagnostics Refresh Rate (ms)",
+        performanceStatsToggle = "Real-time Diagnostics Pipeline",
+        resetDeveloperDefaults = "Reset Tuning to Defaults",
+        liveDiagnosticsTitle = "Live Pipeline & Socket Diagnostics"
     )
 
     val fa = Strings(
@@ -307,7 +331,19 @@ object Localization {
         serverAuthMethodHint = "روش احراز هویت",
         serverProtocolHint = "پروتکل",
         cancel = "لغو",
-        addAndConnect = "افزودن و اتصال"
+        addAndConnect = "افزودن و اتصال",
+        developerModeTitle = "تنظیمات توسعه‌دهنده و کارایی (Performance)",
+        developerModeSubtitle = "تنظیم دقیق MTU، بافر TUN، اتصالات همزمان و مانیتورینگ خط لوله",
+        developerModeToggle = "فعال‌سازی حالت Developer",
+        mtuLabel = "اندازه MTU رابط TUN",
+        bufferSizeLabel = "اندازه بافر I/O (بایت)",
+        maxConnectionsLabel = "حداکثر اتصالات موازی SoftEther",
+        flushStrategyLabel = "استراتژی تخلیه پکت‌ها (Flush)",
+        packetLogLevelLabel = "سطح لاگ ترافیک و بسته‌ها",
+        statsIntervalLabel = "فاصله زمانی بروزرسانی آمار (میلی‌ثانیه)",
+        performanceStatsToggle = "مانیتورینگ زنده مراحل پردازش داده",
+        resetDeveloperDefaults = "بازنشانی تنظیمات به مقادیر پیش‌فرض",
+        liveDiagnosticsTitle = "وضعیت زنده تونل و سوکت‌ها"
     )
 
     fun get(lang: String): Strings = if (lang == "fa") fa else en

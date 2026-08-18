@@ -2,6 +2,10 @@ package com.softether.terminal
 
 import android.os.ParcelFileDescriptor
 import android.util.Log
+import com.softether.model.DeveloperSettings
+import com.softether.model.PacketLogLevel
+import com.softether.model.PacketBufferStrategy
+import com.softether.util.PerformanceMonitor
 import java.io.FileInputStream
 import java.io.FileOutputStream
 
@@ -9,42 +13,33 @@ import java.io.FileOutputStream
  * TunTerminal — forwards L3 IP packets between the Android TUN interface and the
  * SoftEther native data channel (nativeSend / nativeReceive).
  *
- * IMPORTANT DATA-PATH CONTRACT (verified against softether-core source):
- *   - nativeSend == softether_send()   expects an L3 IP packet and wraps it in an
- *                                       Ethernet frame INTERNALLY (uses the dynamic
- *                                       client/gateway MAC resolved during DHCP/ARP).
- *   - nativeReceive == softether_receive() returns an L3 IP packet (the 14-byte Ethernet
- *                                       header is already stripped; ARP is answered/filtered
- *                                       in native; only IPv4/IPv6 EtherTypes are delivered).
- *
- * Therefore this class hands L3 IP packets straight through in BOTH directions and MUST NOT
- * build or strip Ethernet frames itself:
- *   - Old RX: write() read bytes[12..13] of the L3 packet (source IP) as an EtherType, never
- *     matched 0x0800/0x86DD and returned 0 -> nothing written to TUN -> received=0.
- *   - Old TX: TUN frames were wrapped in Ethernet here AND again in softether_send ->
- *     frame-in-frame -> dropped by the server.
+ * Supports Developer Mode configuration:
+ * - Dynamic TUN Buffer Size
+ * - Configurable Output Flush Strategy
+ * - Diagnostic Logging & Zero-Allocation Performance Monitoring
  */
 class TunTerminal(
-    private val vpnInterface: ParcelFileDescriptor
+    private val vpnInterface: ParcelFileDescriptor,
+    private val developerSettings: DeveloperSettings = DeveloperSettings.DEFAULT,
+    private val performanceMonitor: PerformanceMonitor? = null
 ) {
     companion object {
         private const val TAG = "TunTerminal"
-        private const val BUFFER_SIZE = 65535
+        private const val DEFAULT_BUFFER_SIZE = 65535
         private const val IPV4 = 0x04
         private const val IPV6 = 0x06
     }
 
     var onPacketReceived: ((ByteArray) -> Unit)? = null
 
-    // Dynamic MACs obtained from DHCP/ARP resolution. The native layer uses these internally to
-    // build Ethernet frames; kept here for diagnostics only. Never hardcoded.
+    // Dynamic MACs obtained from DHCP/ARP resolution
     @Volatile var gatewayMac: ByteArray? = null
     @Volatile var clientMac: ByteArray? = null
 
     @Volatile var isRunning = false
         private set
 
-    // RX counters: incremented ONLY after a packet is successfully written to the TUN interface.
+    // RX counters
     private var rxPackets = 0L
     private var rxBytes = 0L
 
@@ -52,10 +47,30 @@ class TunTerminal(
     private val inputStream = FileInputStream(vpnInterface.fileDescriptor)
     private val outputStream = FileOutputStream(vpnInterface.fileDescriptor)
 
+    private val bufferSize = if (developerSettings.isDeveloperModeEnabled) {
+        developerSettings.bufferSize.coerceIn(1500, 262144)
+    } else {
+        DEFAULT_BUFFER_SIZE
+    }
+
+    private val flushStrategy = if (developerSettings.isDeveloperModeEnabled) {
+        developerSettings.flushStrategy
+    } else {
+        com.softether.model.FlushStrategy.IMMEDIATE
+    }
+
+    private val packetLogLevel = if (developerSettings.isDeveloperModeEnabled) {
+        developerSettings.packetLogLevel
+    } else {
+        PacketLogLevel.OFF
+    }
+
+    private val isDetailedStats = developerSettings.isDeveloperModeEnabled && developerSettings.isPerformanceStatsEnabled
+
     fun start() {
         if (isRunning) return
         isRunning = true
-        Log.d(TAG, "TUN terminal starting (L3 passthrough) GW=${formatMac(gatewayMac)} CLIENT=${formatMac(clientMac)}")
+        Log.d(TAG, "TUN terminal starting (L3 passthrough) GW=${formatMac(gatewayMac)} CLIENT=${formatMac(clientMac)} bufferSize=$bufferSize flushStrategy=$flushStrategy")
         readThread = Thread({ readLoop() }, "TUN-Reader").apply {
             isDaemon = true
             start()
@@ -63,7 +78,7 @@ class TunTerminal(
     }
 
     private fun readLoop() {
-        val ipBuffer = ByteArray(BUFFER_SIZE)
+        val ipBuffer = ByteArray(bufferSize)
         var txPackets = 0L
         var txBytes = 0L
         while (isRunning) {
@@ -75,14 +90,39 @@ class TunTerminal(
                 // Guard: IP version nibble (high 4 bits of byte 0) must be 4 or 6.
                 val version = (ipBuffer[0].toInt() ushr 4) and 0x0F
                 if (version != IPV4 && version != IPV6) {
-                    Log.w(TAG, "TX skipped: non-IP packet (version=0x${version.toString(16)}, len=$ipLen)")
+                    performanceMonitor?.tunTxDrops?.incrementAndGet()
+                    if (packetLogLevel == PacketLogLevel.VERBOSE) {
+                        Log.w(TAG, "TX skipped: non-IP packet (version=0x${version.toString(16)}, len=$ipLen)")
+                    }
                     continue
                 }
 
                 txPackets++
                 txBytes += ipLen
-                val proto = ipBuffer[9].toInt() and 0xFF
-                if (txPackets <= 10 || txPackets % 50L == 0L) {
+                performanceMonitor?.tunTxPackets?.incrementAndGet()
+                performanceMonitor?.tunTxBytes?.addAndGet(ipLen.toLong())
+
+                if (isDetailedStats) {
+                    performanceMonitor?.inspectIpHeader(ipBuffer, isTx = true)
+                }
+
+                val shouldLogVerbose = packetLogLevel == PacketLogLevel.VERBOSE
+                val shouldLogBasic = if (developerSettings.isDeveloperModeEnabled) {
+                    packetLogLevel == PacketLogLevel.BASIC && (txPackets <= 5 || txPackets % 100L == 0L)
+                } else {
+                    txPackets <= 10 || txPackets % 50L == 0L
+                }
+
+                if (shouldLogVerbose) {
+                    val proto = if (ipLen > 9) ipBuffer[9].toInt() and 0xFF else 0
+                    val enoughForAddr = if (version == IPV6) ipLen >= 40 else ipLen >= 20
+                    val addrStr = if (enoughForAddr) {
+                        val (srcIp, dstIp) = ipAddrs(ipBuffer)
+                        "$srcIp -> $dstIp"
+                    } else "N/A"
+                    Log.d(TAG, "[DEV PACKET TX] #$txPackets: IP(v$version) $addrStr proto=$proto len=$ipLen")
+                } else if (shouldLogBasic) {
+                    val proto = if (ipLen > 9) ipBuffer[9].toInt() and 0xFF else 0
                     val enoughForAddr = if (version == IPV6) ipLen >= 40 else ipLen >= 20
                     if (enoughForAddr) {
                         val (srcIp, dstIp) = ipAddrs(ipBuffer)
@@ -113,16 +153,43 @@ class TunTerminal(
         if (length <= 0 || offset < 0 || length > buffer.size - offset) return 0
         try {
             outputStream.write(buffer, offset, length)
-            outputStream.flush()
+            when (flushStrategy) {
+                com.softether.model.FlushStrategy.IMMEDIATE -> outputStream.flush()
+                com.softether.model.FlushStrategy.AUTO -> { /* let OS kernel buffer/flush */ }
+                com.softether.model.FlushStrategy.BATCH -> if (rxPackets % 16L == 0L) outputStream.flush()
+            }
 
             rxPackets++
             rxBytes += length
-            val version = (buffer[offset].toInt() ushr 4) and 0x0F
-            val proto = buffer[offset + 9].toInt() and 0xFF
-            if (rxPackets <= 10 || rxPackets % 50L == 0L) {
+            performanceMonitor?.tunRxPackets?.incrementAndGet()
+            performanceMonitor?.tunRxBytes?.addAndGet(length.toLong())
+
+            if (isDetailedStats) {
+                performanceMonitor?.inspectIpHeader(buffer, isTx = false)
+            }
+
+            val shouldLogVerbose = packetLogLevel == PacketLogLevel.VERBOSE
+            val shouldLogBasic = if (developerSettings.isDeveloperModeEnabled) {
+                packetLogLevel == PacketLogLevel.BASIC && (rxPackets <= 5 || rxPackets % 100L == 0L)
+            } else {
+                rxPackets <= 10 || rxPackets % 50L == 0L
+            }
+
+            if (shouldLogVerbose) {
+                val version = (buffer[offset].toInt() ushr 4) and 0x0F
+                val proto = if (length > 9) buffer[offset + 9].toInt() and 0xFF else 0
+                val enoughForAddr = if (version == IPV6) length >= 40 else length >= 20
+                val addrStr = if (enoughForAddr) {
+                    val (srcIp, dstIp) = ipAddrs(buffer, offset)
+                    "$srcIp -> $dstIp"
+                } else "N/A"
+                Log.d(TAG, "[DEV PACKET RX] #$rxPackets: IP(v$version) $addrStr proto=$proto len=$length")
+            } else if (shouldLogBasic) {
+                val version = (buffer[offset].toInt() ushr 4) and 0x0F
+                val proto = if (length > 9) buffer[offset + 9].toInt() and 0xFF else 0
                 val enoughForAddr = if (version == IPV6) length >= 40 else length >= 20
                 if (enoughForAddr) {
-                    val (srcIp, dstIp) = ipAddrs(buffer, offset + 12)
+                    val (srcIp, dstIp) = ipAddrs(buffer, offset)
                     Log.d(TAG, "RX #$rxPackets: IP(v$version) $srcIp -> $dstIp proto=$proto len=$length | " +
                             "Native->TUN L3 (packets=$rxPackets bytes=$rxBytes)")
                 } else {
@@ -132,6 +199,7 @@ class TunTerminal(
             }
             return length
         } catch (e: Exception) {
+            performanceMonitor?.tunRxDrops?.incrementAndGet()
             if (isRunning) Log.e(TAG, "Error in TUN write: ${e.message}")
             return -1
         }

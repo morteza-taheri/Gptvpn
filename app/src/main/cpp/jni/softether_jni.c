@@ -293,6 +293,34 @@ JNIEXPORT jintArray JNICALL Java_com_softether_client_SoftEtherClient_nativeGetA
     return arr;
 }
 
+JNIEXPORT jint JNICALL Java_com_softether_client_SoftEtherClient_nativeGetRudpVersion(
+    JNIEnv *env, jobject thiz, jlong handle) {
+    if (handle == 0) return 0;
+    softether_connection_t* conn = (softether_connection_t*)handle;
+    return (jint)conn->rudp_version;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_softether_client_SoftEtherClient_nativeIsRudpEnabled(
+    JNIEnv *env, jobject thiz, jlong handle) {
+    if (handle == 0) return JNI_FALSE;
+    softether_connection_t* conn = (softether_connection_t*)handle;
+    return (conn->rudp_enabled && conn->rudp != NULL) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL Java_com_softether_client_SoftEtherClient_nativeGetServerMaxConnection(
+    JNIEnv *env, jobject thiz, jlong handle) {
+    if (handle == 0) return 0;
+    softether_connection_t* conn = (softether_connection_t*)handle;
+    return (jint)conn->server_max_connection;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_softether_client_SoftEtherClient_nativeIsIpv6(
+    JNIEnv *env, jobject thiz, jlong handle) {
+    if (handle == 0) return JNI_FALSE;
+    softether_connection_t* conn = (softether_connection_t*)handle;
+    return conn->is_ipv6 ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jint JNICALL Java_com_softether_client_SoftEtherClient_nativeGetRudpSocketFd(
     JNIEnv *env, jobject thiz, jlong handle) {
     if (handle == 0) return -1;

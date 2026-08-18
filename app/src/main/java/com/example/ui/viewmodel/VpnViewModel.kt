@@ -20,6 +20,10 @@ import com.example.vpn.model.ConnectionConfig
 import com.example.vpn.model.TransportProtocol
 import com.example.vpn.model.VpnState
 import com.softether.SoftEtherVpnService
+import com.softether.model.DeveloperSettings
+import com.softether.model.FlushStrategy
+import com.softether.model.PacketLogLevel
+import com.softether.model.TunnelDiagnostics
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -46,6 +50,52 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     val vpnState: StateFlow<VpnState> = SoftEtherVpnService.vpnState
     val vpnLogs: StateFlow<List<String>> = SoftEtherVpnService.vpnLogs
+    val tunnelDiagnostics: StateFlow<TunnelDiagnostics> = SoftEtherVpnService.diagnosticsFlow
+
+    private val _developerSettings = MutableStateFlow(prefs.getDeveloperSettings())
+    val developerSettings: StateFlow<DeveloperSettings> = _developerSettings
+
+    fun updateDeveloperSettings(newSettings: DeveloperSettings) {
+        prefs.saveDeveloperSettings(newSettings)
+        _developerSettings.value = newSettings
+    }
+
+    fun setDeveloperMode(enabled: Boolean) {
+        updateDeveloperSettings(_developerSettings.value.copy(isDeveloperModeEnabled = enabled))
+    }
+
+    fun setDeveloperMtu(mtu: Int) {
+        updateDeveloperSettings(_developerSettings.value.copy(mtu = mtu))
+    }
+
+    fun setDeveloperBufferSize(size: Int) {
+        updateDeveloperSettings(_developerSettings.value.copy(bufferSize = size))
+    }
+
+    fun setDeveloperMaxConnections(maxConn: Int) {
+        updateDeveloperSettings(_developerSettings.value.copy(maxConnections = maxConn))
+    }
+
+    fun setDeveloperFlushStrategy(strategy: FlushStrategy) {
+        updateDeveloperSettings(_developerSettings.value.copy(flushStrategy = strategy))
+    }
+
+    fun setDeveloperPacketLogging(level: PacketLogLevel) {
+        updateDeveloperSettings(_developerSettings.value.copy(packetLogLevel = level))
+    }
+
+    fun setDeveloperStatsInterval(intervalMs: Long) {
+        updateDeveloperSettings(_developerSettings.value.copy(statsIntervalMs = intervalMs))
+    }
+
+    fun setPerformanceStatsEnabled(enabled: Boolean) {
+        updateDeveloperSettings(_developerSettings.value.copy(isPerformanceStatsEnabled = enabled))
+    }
+
+    fun resetDeveloperSettings() {
+        val defaultSettings = DeveloperSettings.DEFAULT.copy(isDeveloperModeEnabled = _developerSettings.value.isDeveloperModeEnabled)
+        updateDeveloperSettings(defaultSettings)
+    }
 
     fun clearLogs() {
         SoftEtherVpnService.clearLogs()

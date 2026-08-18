@@ -50,6 +50,19 @@ JNIEXPORT jint JNICALL Java_com_softether_client_SoftEtherClient_nativeGetNumCon
 JNIEXPORT jintArray JNICALL Java_com_softether_client_SoftEtherClient_nativeGetAllSocketFds(
     JNIEnv *env, jobject thiz, jlong handle);
 
+// Diagnostic getters
+JNIEXPORT jint JNICALL Java_com_softether_client_SoftEtherClient_nativeGetRudpVersion(
+    JNIEnv *env, jobject thiz, jlong handle);
+
+JNIEXPORT jboolean JNICALL Java_com_softether_client_SoftEtherClient_nativeIsRudpEnabled(
+    JNIEnv *env, jobject thiz, jlong handle);
+
+JNIEXPORT jint JNICALL Java_com_softether_client_SoftEtherClient_nativeGetServerMaxConnection(
+    JNIEnv *env, jobject thiz, jlong handle);
+
+JNIEXPORT jboolean JNICALL Java_com_softether_client_SoftEtherClient_nativeIsIpv6(
+    JNIEnv *env, jobject thiz, jlong handle);
+
 // DHCP over SoftEther tunnel
 JNIEXPORT jintArray JNICALL Java_com_softether_client_SoftEtherClient_nativeDoDhcp(
     JNIEnv *env, jobject thiz, jlong handle);

@@ -16,25 +16,27 @@ object VpnGateCsvParser {
                 continue
             }
 
-            val tokens = currentLine.split(",")
-            if (tokens.size < 15) continue
+            val tokens = parseCsvRow(currentLine)
+            if (tokens.size < 14) continue
 
             try {
-                val hostName = tokens[0].trim()
-                val ip = tokens[1].trim()
-                val score = tokens[2].trim().toLongOrNull() ?: 0L
-                val pingMs = tokens[3].trim().toIntOrNull() ?: -1
-                val speedBps = tokens[4].trim().toLongOrNull() ?: 0L
-                val countryLong = tokens[5].trim()
-                val countryShort = tokens[6].trim()
-                val numSessions = tokens[7].trim().toIntOrNull() ?: 0
-                val uptime = tokens[8].trim().toLongOrNull() ?: 0L
-                val totUsers = tokens[9].trim().toLongOrNull() ?: 0L
-                val totTraffic = tokens[10].trim().toLongOrNull() ?: 0L
-                val logType = tokens[11].trim()
-                val operator = tokens[12].trim()
-                val comment = tokens[13].trim()
-                val openVpnConfigData = if (tokens.size > 14) tokens[14].trim() else null
+                val hostName = tokens.getOrNull(0)?.trim().orEmpty()
+                val ip = tokens.getOrNull(1)?.trim().orEmpty()
+                if (hostName.isEmpty() && ip.isEmpty()) continue
+
+                val score = tokens.getOrNull(2)?.trim()?.toLongOrNull() ?: 0L
+                val pingMs = tokens.getOrNull(3)?.trim()?.toIntOrNull() ?: -1
+                val speedBps = tokens.getOrNull(4)?.trim()?.toLongOrNull() ?: 0L
+                val countryLong = tokens.getOrNull(5)?.trim().orEmpty()
+                val countryShort = tokens.getOrNull(6)?.trim().orEmpty()
+                val numSessions = tokens.getOrNull(7)?.trim()?.toIntOrNull() ?: 0
+                val uptime = tokens.getOrNull(8)?.trim()?.toLongOrNull() ?: 0L
+                val totUsers = tokens.getOrNull(9)?.trim()?.toLongOrNull() ?: 0L
+                val totTraffic = tokens.getOrNull(10)?.trim()?.toLongOrNull() ?: 0L
+                val logType = tokens.getOrNull(11)?.trim().orEmpty()
+                val operator = tokens.getOrNull(12)?.trim().orEmpty()
+                val comment = tokens.getOrNull(13)?.trim().orEmpty()
+                val openVpnConfigData = tokens.getOrNull(14)?.trim()?.takeIf { it.isNotBlank() }
 
                 var parsedTcpPort: Int? = null
                 var parsedUdpPort: Int? = null
@@ -104,5 +106,38 @@ object VpnGateCsvParser {
             }
         }
         return servers
+    }
+
+    /**
+     * Parses a standard CSV line accounting for quoted fields with commas and escaped quotes ("").
+     */
+    fun parseCsvRow(line: String): List<String> {
+        val result = mutableListOf<String>()
+        val sb = StringBuilder()
+        var inQuotes = false
+        var i = 0
+        while (i < line.length) {
+            val c = line[i]
+            when {
+                c == '\"' -> {
+                    if (inQuotes && i + 1 < line.length && line[i + 1] == '\"') {
+                        sb.append('\"')
+                        i++ // Skip escaped quote
+                    } else {
+                        inQuotes = !inQuotes
+                    }
+                }
+                c == ',' && !inQuotes -> {
+                    result.add(sb.toString())
+                    sb.setLength(0)
+                }
+                else -> {
+                    sb.append(c)
+                }
+            }
+            i++
+        }
+        result.add(sb.toString())
+        return result
     }
 }

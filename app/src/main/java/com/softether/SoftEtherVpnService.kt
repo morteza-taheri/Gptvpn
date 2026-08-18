@@ -64,6 +64,13 @@ class SoftEtherVpnService : VpnService() {
         private val _vpnLogs = kotlinx.coroutines.flow.MutableStateFlow<List<String>>(emptyList())
         val vpnLogs: kotlinx.coroutines.flow.StateFlow<List<String>> = _vpnLogs
 
+        private val _diagnosticsFlow = kotlinx.coroutines.flow.MutableStateFlow<com.softether.model.TunnelDiagnostics>(com.softether.model.TunnelDiagnostics.EMPTY)
+        val diagnosticsFlow: kotlinx.coroutines.flow.StateFlow<com.softether.model.TunnelDiagnostics> = _diagnosticsFlow
+
+        fun updateDiagnostics(diag: com.softether.model.TunnelDiagnostics) {
+            _diagnosticsFlow.value = diag
+        }
+
         private fun getTimeString(): String {
             val sdf = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
             return sdf.format(java.util.Date())
@@ -581,15 +588,22 @@ class SoftEtherVpnService : VpnService() {
      * Establish the VPN tunnel interface
      */
     fun establishVpnInterface(config: ConnectionConfig): ParcelFileDescriptor? {
+        val devSettings = try {
+            com.example.data.local.PreferencesManager(this).getDeveloperSettings()
+        } catch (_: Exception) {
+            com.softether.model.DeveloperSettings.DEFAULT
+        }
+        val effectiveMtu = if (devSettings.isDeveloperModeEnabled) devSettings.mtu.coerceIn(1280, 1500) else config.mtu
+
         val routeSummary = config.routes.joinToString(",") { "${it.address}/${it.prefixLength}" }
         com.softether.SoftEtherVpnService.log(
             "D", TAG,
-            "Establishing VPN interface: addr=${config.localAddress}/${config.prefixLength} mtu=${config.mtu} " +
+            "Establishing VPN interface: addr=${config.localAddress}/${config.prefixLength} mtu=$effectiveMtu (configMtu=${config.mtu}) " +
                 "dns1=${config.dnsServer} dns2=${config.secondaryDnsServer} routes=$routeSummary"
         )
         val builder = Builder()
             .setSession(config.sessionName)
-            .setMtu(config.mtu)
+            .setMtu(effectiveMtu)
             .addAddress(config.localAddress, config.prefixLength)
             .addDnsServer(config.dnsServer)
 

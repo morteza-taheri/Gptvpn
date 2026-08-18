@@ -288,6 +288,30 @@ class SoftEtherClient {
     external fun nativeGetAllSocketFds(handle: Long): IntArray?
     external fun nativeGetClientMac(handle: Long): ByteArray?
     external fun nativeGetGatewayMac(handle: Long): ByteArray?
+    external fun nativeGetRudpVersion(handle: Long): Int
+    external fun nativeIsRudpEnabled(handle: Long): Boolean
+    external fun nativeGetServerMaxConnection(handle: Long): Int
+    external fun nativeIsIpv6(handle: Long): Boolean
+
+    fun getRudpVersion(handle: Long = externalHandle.takeIf { it != 0L } ?: nativeHandle): Int {
+        if (handle == 0L) return 0
+        return nativeGetRudpVersion(handle)
+    }
+
+    fun isRudpEnabled(handle: Long = externalHandle.takeIf { it != 0L } ?: nativeHandle): Boolean {
+        if (handle == 0L) return false
+        return nativeIsRudpEnabled(handle)
+    }
+
+    fun getServerMaxConnection(handle: Long = externalHandle.takeIf { it != 0L } ?: nativeHandle): Int {
+        if (handle == 0L) return 0
+        return nativeGetServerMaxConnection(handle)
+    }
+
+    fun isIpv6(handle: Long = externalHandle.takeIf { it != 0L } ?: nativeHandle): Boolean {
+        if (handle == 0L) return false
+        return nativeIsIpv6(handle)
+    }
 
     /**
      * Perform DHCP over SoftEther tunnel to get IP configuration

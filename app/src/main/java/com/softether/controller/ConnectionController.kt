@@ -21,7 +21,11 @@ import com.softether.client.protocol.PacketHandler
 import com.softether.model.ClientInfo
 import com.softether.model.ConnectionConfig
 import com.softether.model.ConnectionState
+import com.softether.model.DeveloperSettings
+import com.softether.model.PacketLogLevel
+import com.softether.model.SocketProtectInfo
 import com.softether.terminal.TunTerminal
+import com.softether.util.PerformanceMonitor
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.NetworkInterface
@@ -77,9 +81,19 @@ class ConnectionController(
     private var vpnInterface: ParcelFileDescriptor? = null
     private var tunTerminal: TunTerminal? = null
 
+    val devSettings: DeveloperSettings = try {
+        com.example.data.local.PreferencesManager(service).getDeveloperSettings()
+    } catch (_: Exception) {
+        DeveloperSettings.DEFAULT
+    }
+    val performanceMonitor = PerformanceMonitor()
+    private val socketProtectList = java.util.Collections.synchronizedList(mutableListOf<SocketProtectInfo>())
+    private val protectedFds = mutableSetOf<Int>()
+
     // Dynamic MAC addresses obtained from DHCP and ARP resolution
     @Volatile var currentClientMac: ByteArray? = null
     @Volatile var resolvedGatewayMac: ByteArray? = null
+    @Volatile var assignedGatewayIp: String? = null
 
     /**
      * Handle network connectivity changes.
@@ -280,8 +294,9 @@ class ConnectionController(
             com.softether.model.AuthMethod.AUTO -> -1
         }
         client.nativeSetAuthType(nativeHandle, authTypeInt)
-        // غیرفعال کردن اتصالات کمکی موازی پسزمینه برای جلوگیری از لوپ روتینگ سوکتها
-        client.nativeSetMaxConnection(nativeHandle, 1)
+        // تنظیم حداکثر اتصالات موازی بر اساس Developer Mode (پیش‌فرض: 1 اتصال اصلی)
+        val effectiveMaxConn = if (devSettings.isDeveloperModeEnabled) devSettings.maxConnections.coerceIn(1, 32) else 1
+        client.nativeSetMaxConnection(nativeHandle, effectiveMaxConn)
         startNativeStateMonitor()
         // Build client info (rudpPort will be filled in by native code during RUDP init)
         val clientInfo = buildClientInfo(0)
@@ -352,9 +367,12 @@ class ConnectionController(
         // Protect VPN socket from routing through TUN (prevents routing loop)
         val socketFd = client.nativeGetSocketFd(nativeHandle)
         if (socketFd >= 0) {
-            if (!service.protect(socketFd)) {
+            val protectedSuccess = service.protect(socketFd)
+            socketProtectList.add(SocketProtectInfo(fd = socketFd, socketType = "TCP Main", isProtected = protectedSuccess))
+            if (!protectedSuccess) {
                 com.softether.SoftEtherVpnService.log("E", TAG, "Failed to protect VPN socket fd=$socketFd")
             } else {
+                protectedFds.add(socketFd)
                 com.softether.SoftEtherVpnService.log("D", TAG, "VPN socket fd=$socketFd protected from TUN routing")
             }
         } else {
@@ -364,9 +382,12 @@ class ConnectionController(
         // Also protect RUDP UDP socket from routing through TUN (prevents RUDP routing loop)
         val rudpFd = client.nativeGetRudpSocketFd(nativeHandle)
         if (rudpFd >= 0) {
-            if (!service.protect(rudpFd)) {
+            val rudpProtected = service.protect(rudpFd)
+            socketProtectList.add(SocketProtectInfo(fd = rudpFd, socketType = "UDP RUDP", isProtected = rudpProtected))
+            if (!rudpProtected) {
                 com.softether.SoftEtherVpnService.log("E", TAG, "Failed to protect RUDP socket fd=$rudpFd")
             } else {
+                protectedFds.add(rudpFd)
                 com.softether.SoftEtherVpnService.log("D", TAG, "RUDP socket fd=$rudpFd protected from TUN routing")
             }
         }
@@ -378,6 +399,7 @@ class ConnectionController(
             Log.d(TAG, "DHCP success: IP=${dhcpResult.assignedIp}/${dhcpResult.prefixLength} " +
                     "GW=${dhcpResult.gateway} DNS=${dhcpResult.dnsServer} DNS2=${dhcpResult.dnsServer2}")
             assignedLocalIp = dhcpResult.assignedIp
+            assignedGatewayIp = dhcpResult.gateway
             // دریافت مک‌آدرس کلاینت و گیت‌وی به صورت کاملاً پویا و واقعی از نشست فعال
             currentClientMac = client.getClientMac() ?: byteArrayOf(
                 0x5E.toByte(), 0x5C.toByte(), 0x9B.toByte(), 0x33.toByte(), 0x1A.toByte(), 0x17.toByte()
@@ -577,7 +599,7 @@ class ConnectionController(
             ?: throw IllegalStateException("VPN interface not established")
 
         // Store reference to tunTerminal so we can stop it cleanly
-        this.tunTerminal = TunTerminal(tunInterface)
+        this.tunTerminal = TunTerminal(tunInterface, devSettings, performanceMonitor)
         val terminal = this.tunTerminal!!
         
         val packetHandler = PacketHandler(client)
@@ -602,13 +624,20 @@ class ConnectionController(
         // Start TUN interface reading
         terminal.start()
 
+        val activeBufferSize = if (devSettings.isDeveloperModeEnabled) devSettings.bufferSize.coerceIn(1500, 262144) else 65535
+        val isDetailedStats = devSettings.isDeveloperModeEnabled && devSettings.isPerformanceStatsEnabled
+
         // Send loop: TUN -> VPN
         scope.launch {
-            val sendBuffer = ByteArray(65535)
             while (isConnected() && !isCancelled.get()) {
                 try {
                     val packet = packetHandler.pollSendQueue()
                     if (packet != null) {
+                        performanceMonitor.encapPackets.incrementAndGet()
+                        performanceMonitor.encapBytes.addAndGet(packet.size.toLong())
+                        performanceMonitor.jniSendPackets.incrementAndGet()
+                        performanceMonitor.jniSendBytes.addAndGet(packet.size.toLong())
+
                         val result = client.send(packet)
                         if (packetsSent.get() <= 10 || packetsSent.get() % 50L == 0L) {
                             com.softether.SoftEtherVpnService.log(
@@ -620,8 +649,11 @@ class ConnectionController(
                         if (result > 0) {
                             bytesSent.addAndGet(result.toLong())
                             packetsSent.incrementAndGet()
+                            performanceMonitor.recordTxPacket(result, isDetailedStats)
                             maybePublishTrafficSnapshot()
                         } else if (result < 0) {
+                            performanceMonitor.nativeSendFailures.incrementAndGet()
+                            performanceMonitor.jniSendFailures.incrementAndGet()
                             com.softether.SoftEtherVpnService.log("W", TAG, "Send failed: $result")
                             if (isConnected()) {
                                 scope.launch { attemptReconnect() }
@@ -635,6 +667,7 @@ class ConnectionController(
                 } catch (e: CancellationException) {
                     break
                 } catch (e: Exception) {
+                    performanceMonitor.jniSendFailures.incrementAndGet()
                     com.softether.SoftEtherVpnService.log("E", TAG, "Send loop error", e)
                     if (isConnected()) {
                         scope.launch { attemptReconnect() }
@@ -646,7 +679,7 @@ class ConnectionController(
 
         // Receive loop: VPN -> TUN
         scope.launch {
-            val receiveBuffer = ByteArray(65535)
+            val receiveBuffer = ByteArray(activeBufferSize)
             var receiveCount = 0
             while (isConnected() && !isCancelled.get()) {
                 try {
@@ -654,8 +687,14 @@ class ConnectionController(
                     when {
                         result > 0 -> {
                             // Valid data received
-                            val packet = receiveBuffer.copyOf(result)
-                            val writeResult = terminal.write(packet)
+                            performanceMonitor.seRxPackets.incrementAndGet()
+                            performanceMonitor.seRxBytes.addAndGet(result.toLong())
+                            performanceMonitor.jniRecvPackets.incrementAndGet()
+                            performanceMonitor.jniRecvBytes.addAndGet(result.toLong())
+                            performanceMonitor.decapPackets.incrementAndGet()
+                            performanceMonitor.decapBytes.addAndGet(result.toLong())
+
+                            val writeResult = terminal.write(receiveBuffer, 0, result)
                             if (packetsReceived.get() <= 10 || packetsReceived.get() % 50L == 0L) {
                                 com.softether.SoftEtherVpnService.log(
                                     "D", TAG,
@@ -666,6 +705,7 @@ class ConnectionController(
                             if (writeResult > 0) {
                                 bytesReceived.addAndGet(result.toLong())
                                 packetsReceived.incrementAndGet()
+                                performanceMonitor.recordRxPacket(result, isDetailedStats)
                                 maybePublishTrafficSnapshot()
                             }
                             // Periodically protect additional sockets (multi-connection)
@@ -681,6 +721,8 @@ class ConnectionController(
                         }
                         result < 0 -> {
                             // Error receiving
+                            performanceMonitor.nativeReceiveErrors.incrementAndGet()
+                            performanceMonitor.jniRecvErrors.incrementAndGet()
                             com.softether.SoftEtherVpnService.log("E", TAG, "Receive error: $result")
                             if (isConnected() && !isCancelled.get()) {
                                 scope.launch { attemptReconnect() }
@@ -691,6 +733,7 @@ class ConnectionController(
                 } catch (e: CancellationException) {
                     break
                 } catch (e: Exception) {
+                    performanceMonitor.jniRecvErrors.incrementAndGet()
                     com.softether.SoftEtherVpnService.log("E", TAG, "Receive loop error", e)
                     if (isConnected() && !isCancelled.get()) {
                         scope.launch { attemptReconnect() }
@@ -781,8 +824,9 @@ class ConnectionController(
                 com.softether.model.AuthMethod.AUTO -> -1
             }
             client.nativeSetAuthType(nativeHandle, authTypeInt)
-            // اعمال سقف اتصال تکی برای سناریوی قطع و وصل خودکار
-            client.nativeSetMaxConnection(nativeHandle, 1)
+            // اعمال سقف اتصال بر اساس Developer Mode (پیش‌فرض: 1)
+            val effectiveMaxConn = if (devSettings.isDeveloperModeEnabled) devSettings.maxConnections.coerceIn(1, 32) else 1
+            client.nativeSetMaxConnection(nativeHandle, effectiveMaxConn)
 
             // Connect to server (TLS + protocol + auth + session)
             startNativeStateMonitor()
@@ -820,9 +864,12 @@ class ConnectionController(
             // Protect VPN socket from routing through TUN
             val socketFd = client.nativeGetSocketFd(nativeHandle)
             if (socketFd >= 0) {
-                if (!service.protect(socketFd)) {
+                val success = service.protect(socketFd)
+                socketProtectList.add(SocketProtectInfo(fd = socketFd, socketType = "TCP Main (Reconnect)", isProtected = success))
+                if (!success) {
                     com.softether.SoftEtherVpnService.log("E", TAG, "Failed to protect VPN socket fd=$socketFd during reconnect")
                 } else {
+                    protectedFds.add(socketFd)
                     com.softether.SoftEtherVpnService.log("D", TAG, "VPN socket fd=$socketFd protected during reconnect")
                 }
             }
@@ -830,9 +877,12 @@ class ConnectionController(
             // Protect RUDP UDP socket
             val rudpFd = client.nativeGetRudpSocketFd(nativeHandle)
             if (rudpFd >= 0) {
-                if (!service.protect(rudpFd)) {
+                val success = service.protect(rudpFd)
+                socketProtectList.add(SocketProtectInfo(fd = rudpFd, socketType = "UDP RUDP (Reconnect)", isProtected = success))
+                if (!success) {
                     com.softether.SoftEtherVpnService.log("E", TAG, "Failed to protect RUDP socket fd=$rudpFd during reconnect")
                 } else {
+                    protectedFds.add(rudpFd)
                     com.softether.SoftEtherVpnService.log("D", TAG, "RUDP socket fd=$rudpFd protected during reconnect")
                 }
             }
@@ -845,6 +895,7 @@ class ConnectionController(
             if (dhcpResult != null) {
                 com.softether.SoftEtherVpnService.log("D", TAG, "DHCP success on reconnect: IP=${dhcpResult.assignedIp}/${dhcpResult.prefixLength}")
                 assignedLocalIp = dhcpResult.assignedIp
+                assignedGatewayIp = dhcpResult.gateway
 
                 // دریافت مک‌آدرس‌های جدید در سناریوی قطع و وصل مجدد خودکار
                 currentClientMac = client.getClientMac() ?: byteArrayOf(
@@ -935,25 +986,65 @@ class ConnectionController(
     }
 
     /**
-     * Start periodic statistics logging
+     * Start periodic statistics logging and diagnostics publishing
      */
     private fun startStatisticsLogging() {
+        val interval = if (devSettings.isDeveloperModeEnabled && devSettings.isPerformanceStatsEnabled) {
+            devSettings.statsIntervalMs.coerceIn(200L, 10000L)
+        } else {
+            STATS_INTERVAL_MS
+        }
+
         scope.launch {
             while (!isCancelled.get() &&
                 currentState != ConnectionState.DISCONNECTED &&
                 currentState != ConnectionState.ERROR
             ) {
                 try {
-                    delay(STATS_INTERVAL_MS)
+                    delay(interval)
                     if (isConnected()) {
                         publishTrafficSnapshot()
-                        com.softether.SoftEtherVpnService.log("D", TAG, "Stats: sent=${bytesSent.get()} bytes (${packetsSent.get()} pkts), " +
-                                "received=${bytesReceived.get()} bytes (${packetsReceived.get()} pkts)")
+                        publishDiagnosticsSnapshot()
+                        if (devSettings.isDeveloperModeEnabled && devSettings.packetLogLevel == PacketLogLevel.VERBOSE) {
+                            com.softether.SoftEtherVpnService.log("D", TAG, "Stats: sent=${bytesSent.get()} bytes (${packetsSent.get()} pkts), " +
+                                    "received=${bytesReceived.get()} bytes (${packetsReceived.get()} pkts)")
+                        }
                     }
                 } catch (e: CancellationException) {
                     break
                 }
             }
+        }
+    }
+
+    private fun publishDiagnosticsSnapshot() {
+        try {
+            val handle = nativeHandle
+            val numConnections = if (handle != 0L) client.getNumConnections() else 0
+            val serverMaxConn = if (handle != 0L) client.getServerMaxConnection(handle) else 0
+            val isRudp = if (handle != 0L) client.isRudpEnabled(handle) else false
+            val rudpVer = if (handle != 0L) client.getRudpVersion(handle) else 0
+            val isIpv6 = if (handle != 0L) client.isIpv6(handle) else false
+
+            val diag = performanceMonitor.buildSnapshot(
+                devSettings = devSettings,
+                assignedIp = assignedLocalIp ?: config.localAddress,
+                gatewayIp = assignedGatewayIp ?: "10.0.0.1",
+                dnsServers = listOfNotNull(config.dnsServer, config.secondaryDnsServer),
+                currentMtu = config.mtu,
+                serverHost = config.serverHost,
+                serverPort = config.serverPort,
+                virtualHub = config.virtualHub,
+                numConnections = numConnections,
+                serverMaxConnections = serverMaxConn,
+                isRudpEnabled = isRudp,
+                rudpVersion = rudpVer,
+                isIpv6 = isIpv6,
+                sockets = socketProtectList.toList()
+            )
+            SoftEtherVpnService.updateDiagnostics(diag)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error publishing diagnostics: ${e.message}")
         }
     }
 
@@ -1058,9 +1149,6 @@ class ConnectionController(
         }
     }
 
-    // Track FDs we've already protected to avoid redundant protect() calls
-    private val protectedFds = mutableSetOf<Int>()
-
     /**
      * Protect any new additional TCP sockets from routing through TUN.
      * Called periodically from the receive loop after additional connections are established.
@@ -1069,7 +1157,9 @@ class ConnectionController(
         val allFds = client.getAllSocketFds() ?: return
         for (fd in allFds) {
             if (fd >= 0 && fd !in protectedFds) {
-                if (service.protect(fd)) {
+                val success = service.protect(fd)
+                socketProtectList.add(SocketProtectInfo(fd = fd, socketType = "TCP Additional", isProtected = success))
+                if (success) {
                     protectedFds.add(fd)
                     com.softether.SoftEtherVpnService.log("D", TAG, "Additional socket fd=$fd protected from TUN routing")
                 } else {

@@ -48,6 +48,20 @@ class PreferencesManager(context: Context) {
 
         // Sources enabled/disabled keys
         const val PREFIX_SOURCE_ENABLED = "source_enabled_"
+
+        // Developer / Performance Mode keys
+        const val KEY_DEV_MODE_ENABLED = "key_dev_mode_enabled"
+        const val KEY_DEV_MAX_CONNECTIONS = "key_dev_max_connections"
+        const val KEY_DEV_MTU = "key_dev_mtu"
+        const val KEY_DEV_BUFFER_SIZE = "key_dev_buffer_size"
+        const val KEY_DEV_PACKET_LOG_LEVEL = "key_dev_packet_log_level"
+        const val KEY_DEV_STATS_ENABLED = "key_dev_stats_enabled"
+        const val KEY_DEV_STATS_INTERVAL_MS = "key_dev_stats_interval_ms"
+        const val KEY_DEV_FORCE_FLUSH = "key_dev_force_flush"
+        const val KEY_DEV_FLUSH_STRATEGY = "key_dev_flush_strategy"
+        const val KEY_DEV_BUFFER_STRATEGY = "key_dev_buffer_strategy"
+        const val KEY_DEV_UDP_ACCELERATION = "key_dev_udp_acceleration"
+        const val KEY_DEV_DEBUG_LOG_LEVEL = "key_dev_debug_log_level"
     }
 
     val defaultDnsPresets = listOf(
@@ -238,6 +252,65 @@ class PreferencesManager(context: Context) {
     fun getConnectionHostMode(): String = prefs.getString(KEY_CONNECTION_HOST_MODE, "HOSTNAME") ?: "HOSTNAME"
     fun setConnectionHostMode(mode: String) {
         prefs.edit().putString(KEY_CONNECTION_HOST_MODE, mode).apply()
+    }
+
+    // Developer / Performance Mode Methods
+    fun isDeveloperModeEnabled(): Boolean = prefs.getBoolean(KEY_DEV_MODE_ENABLED, false)
+    fun setDeveloperModeEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_DEV_MODE_ENABLED, enabled).apply()
+    }
+
+    fun getDeveloperSettings(): com.softether.model.DeveloperSettings {
+        return com.softether.model.DeveloperSettings(
+            isDeveloperModeEnabled = prefs.getBoolean(KEY_DEV_MODE_ENABLED, false),
+            maxConnections = prefs.getInt(KEY_DEV_MAX_CONNECTIONS, 1),
+            mtu = prefs.getInt(KEY_DEV_MTU, 1400),
+            bufferSize = prefs.getInt(KEY_DEV_BUFFER_SIZE, 65536),
+            flushStrategy = try {
+                com.softether.model.FlushStrategy.valueOf(prefs.getString(KEY_DEV_FLUSH_STRATEGY, "IMMEDIATE") ?: "IMMEDIATE")
+            } catch (_: Exception) { com.softether.model.FlushStrategy.IMMEDIATE },
+            packetLogLevel = try {
+                com.softether.model.PacketLogLevel.valueOf(prefs.getString(KEY_DEV_PACKET_LOG_LEVEL, "OFF") ?: "OFF")
+            } catch (_: Exception) { com.softether.model.PacketLogLevel.OFF },
+            isPerformanceStatsEnabled = prefs.getBoolean(KEY_DEV_STATS_ENABLED, false),
+            statsIntervalMs = prefs.getLong(KEY_DEV_STATS_INTERVAL_MS, 1000L),
+            forceFlush = prefs.getBoolean(KEY_DEV_FORCE_FLUSH, true),
+            bufferStrategy = try {
+                com.softether.model.PacketBufferStrategy.valueOf(prefs.getString(KEY_DEV_BUFFER_STRATEGY, "SAFE_CURRENT") ?: "SAFE_CURRENT")
+            } catch (_: Exception) { com.softether.model.PacketBufferStrategy.SAFE_CURRENT },
+            udpAcceleration = try {
+                com.softether.model.UdpAccelerationSetting.valueOf(prefs.getString(KEY_DEV_UDP_ACCELERATION, "AUTO") ?: "AUTO")
+            } catch (_: Exception) { com.softether.model.UdpAccelerationSetting.AUTO },
+            debugLogLevel = try {
+                com.softether.model.DebugLogLevel.valueOf(prefs.getString(KEY_DEV_DEBUG_LOG_LEVEL, "DEBUG") ?: "DEBUG")
+            } catch (_: Exception) { com.softether.model.DebugLogLevel.DEBUG }
+        )
+    }
+
+    fun setDeveloperSettings(settings: com.softether.model.DeveloperSettings) {
+        prefs.edit()
+            .putBoolean(KEY_DEV_MODE_ENABLED, settings.isDeveloperModeEnabled)
+            .putInt(KEY_DEV_MAX_CONNECTIONS, settings.maxConnections)
+            .putInt(KEY_DEV_MTU, settings.mtu)
+            .putInt(KEY_DEV_BUFFER_SIZE, settings.bufferSize)
+            .putString(KEY_DEV_FLUSH_STRATEGY, settings.flushStrategy.name)
+            .putString(KEY_DEV_PACKET_LOG_LEVEL, settings.packetLogLevel.name)
+            .putBoolean(KEY_DEV_STATS_ENABLED, settings.isPerformanceStatsEnabled)
+            .putLong(KEY_DEV_STATS_INTERVAL_MS, settings.statsIntervalMs)
+            .putBoolean(KEY_DEV_FORCE_FLUSH, settings.forceFlush)
+            .putString(KEY_DEV_BUFFER_STRATEGY, settings.bufferStrategy.name)
+            .putString(KEY_DEV_UDP_ACCELERATION, settings.udpAcceleration.name)
+            .putString(KEY_DEV_DEBUG_LOG_LEVEL, settings.debugLogLevel.name)
+            .apply()
+    }
+
+    fun saveDeveloperSettings(settings: com.softether.model.DeveloperSettings) {
+        setDeveloperSettings(settings)
+    }
+
+    fun resetDeveloperSettings() {
+        val currentEnabled = isDeveloperModeEnabled()
+        setDeveloperSettings(com.softether.model.DeveloperSettings.DEFAULT.copy(isDeveloperModeEnabled = currentEnabled))
     }
 }
 
