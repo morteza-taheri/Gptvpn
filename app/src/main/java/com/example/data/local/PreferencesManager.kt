@@ -61,6 +61,10 @@ class PreferencesManager(context: Context) {
         const val KEY_DEV_FLUSH_STRATEGY = "key_dev_flush_strategy"
         const val KEY_DEV_BUFFER_STRATEGY = "key_dev_buffer_strategy"
         const val KEY_DEV_UDP_ACCELERATION = "key_dev_udp_acceleration"
+        const val KEY_DEV_TCP_NODELAY = "key_dev_tcp_nodelay"
+        const val KEY_DEV_SOCKET_BUFFER_SIZE_KB = "key_dev_socket_buffer_size_kb"
+        const val KEY_DEV_TCP_KEEPALIVE_SEC = "key_dev_tcp_keepalive_sec"
+        const val KEY_DEV_HIGH_PRIORITY_THREADS = "key_dev_high_priority_threads"
         const val KEY_DEV_DEBUG_LOG_LEVEL = "key_dev_debug_log_level"
     }
 
@@ -281,6 +285,10 @@ class PreferencesManager(context: Context) {
             udpAcceleration = try {
                 com.softether.model.UdpAccelerationSetting.valueOf(prefs.getString(KEY_DEV_UDP_ACCELERATION, "AUTO") ?: "AUTO")
             } catch (_: Exception) { com.softether.model.UdpAccelerationSetting.AUTO },
+            tcpNoDelay = prefs.getBoolean(KEY_DEV_TCP_NODELAY, true),
+            socketBufferSizeKb = prefs.getInt(KEY_DEV_SOCKET_BUFFER_SIZE_KB, 0),
+            tcpKeepaliveSec = prefs.getInt(KEY_DEV_TCP_KEEPALIVE_SEC, 10),
+            highPriorityThreads = prefs.getBoolean(KEY_DEV_HIGH_PRIORITY_THREADS, true),
             debugLogLevel = try {
                 com.softether.model.DebugLogLevel.valueOf(prefs.getString(KEY_DEV_DEBUG_LOG_LEVEL, "DEBUG") ?: "DEBUG")
             } catch (_: Exception) { com.softether.model.DebugLogLevel.DEBUG }
@@ -300,6 +308,10 @@ class PreferencesManager(context: Context) {
             .putBoolean(KEY_DEV_FORCE_FLUSH, settings.forceFlush)
             .putString(KEY_DEV_BUFFER_STRATEGY, settings.bufferStrategy.name)
             .putString(KEY_DEV_UDP_ACCELERATION, settings.udpAcceleration.name)
+            .putBoolean(KEY_DEV_TCP_NODELAY, settings.tcpNoDelay)
+            .putInt(KEY_DEV_SOCKET_BUFFER_SIZE_KB, settings.socketBufferSizeKb)
+            .putInt(KEY_DEV_TCP_KEEPALIVE_SEC, settings.tcpKeepaliveSec)
+            .putBoolean(KEY_DEV_HIGH_PRIORITY_THREADS, settings.highPriorityThreads)
             .putString(KEY_DEV_DEBUG_LOG_LEVEL, settings.debugLogLevel.name)
             .apply()
     }

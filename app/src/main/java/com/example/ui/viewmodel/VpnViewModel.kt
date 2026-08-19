@@ -88,6 +88,26 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         updateDeveloperSettings(_developerSettings.value.copy(statsIntervalMs = intervalMs))
     }
 
+    fun setDeveloperTcpNoDelay(enabled: Boolean) {
+        updateDeveloperSettings(_developerSettings.value.copy(tcpNoDelay = enabled))
+    }
+
+    fun setDeveloperSocketBufferSize(sizeKb: Int) {
+        updateDeveloperSettings(_developerSettings.value.copy(socketBufferSizeKb = sizeKb))
+    }
+
+    fun setDeveloperUdpAcceleration(mode: com.softether.model.UdpAccelerationSetting) {
+        updateDeveloperSettings(_developerSettings.value.copy(udpAcceleration = mode))
+    }
+
+    fun setDeveloperHighPriorityThreads(enabled: Boolean) {
+        updateDeveloperSettings(_developerSettings.value.copy(highPriorityThreads = enabled))
+    }
+
+    fun setDeveloperTcpKeepalive(seconds: Int) {
+        updateDeveloperSettings(_developerSettings.value.copy(tcpKeepaliveSec = seconds))
+    }
+
     fun setPerformanceStatsEnabled(enabled: Boolean) {
         updateDeveloperSettings(_developerSettings.value.copy(isPerformanceStatsEnabled = enabled))
     }

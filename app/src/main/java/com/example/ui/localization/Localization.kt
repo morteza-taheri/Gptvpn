@@ -112,7 +112,14 @@ data class Strings(
     val statsIntervalLabel: String,
     val performanceStatsToggle: String,
     val resetDeveloperDefaults: String,
-    val liveDiagnosticsTitle: String
+    val liveDiagnosticsTitle: String,
+    val socketBufferSizeLabel: String,
+    val tcpNoDelayLabel: String,
+    val udpAccelerationLabel: String,
+    val highPriorityThreadsLabel: String,
+    val tcpKeepaliveLabel: String,
+    val forceDisconnectAll: String,
+    val forceDisconnectAllSubtitle: String
 )
 
 object Localization {
@@ -228,7 +235,14 @@ object Localization {
         statsIntervalLabel = "Diagnostics Refresh Rate (ms)",
         performanceStatsToggle = "Real-time Diagnostics Pipeline",
         resetDeveloperDefaults = "Reset Tuning to Defaults",
-        liveDiagnosticsTitle = "Live Pipeline & Socket Diagnostics"
+        liveDiagnosticsTitle = "Live Pipeline & Socket Diagnostics",
+        socketBufferSizeLabel = "TCP Socket Buffer Size (SO_RCVBUF / SO_SNDBUF)",
+        tcpNoDelayLabel = "TCP_NODELAY (Disable Nagle Algorithm)",
+        udpAccelerationLabel = "UDP Fast-Path Acceleration (RUDP)",
+        highPriorityThreadsLabel = "High Priority I/O Worker Threads",
+        tcpKeepaliveLabel = "TCP Keepalive Interval (seconds)",
+        forceDisconnectAll = "Force Disconnect All Connections",
+        forceDisconnectAllSubtitle = "Immediately kill all active sockets, TUN interface, and reset service state"
     )
 
     val fa = Strings(
@@ -343,7 +357,14 @@ object Localization {
         statsIntervalLabel = "فاصله زمانی بروزرسانی آمار (میلی‌ثانیه)",
         performanceStatsToggle = "مانیتورینگ زنده مراحل پردازش داده",
         resetDeveloperDefaults = "بازنشانی تنظیمات به مقادیر پیش‌فرض",
-        liveDiagnosticsTitle = "وضعیت زنده تونل و سوکت‌ها"
+        liveDiagnosticsTitle = "وضعیت زنده تونل و سوکت‌ها",
+        socketBufferSizeLabel = "اندازه بافر سوکت TCP (SO_RCVBUF / SO_SNDBUF)",
+        tcpNoDelayLabel = "الگوریتم TCP_NODELAY (حذف تاخیر Nagle)",
+        udpAccelerationLabel = "شتاب‌دهنده UDP Fast-Path (سافت‌اتر RUDP)",
+        highPriorityThreadsLabel = "اولویت بالای ترد‌های پردازش ترافیک (High Priority I/O)",
+        tcpKeepaliveLabel = "فاصله زمانی ارسال بسته زنده نگهدارنده TCP (ثانیه)",
+        forceDisconnectAll = "قطع اجباری و بستن تمام اتصالات فعال",
+        forceDisconnectAllSubtitle = "بستن تمام سوکت‌های باز، آزادسازی رابط TUN و ریست وضعیت سرویس"
     )
 
     fun get(lang: String): Strings = if (lang == "fa") fa else en

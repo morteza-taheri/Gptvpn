@@ -77,6 +77,10 @@ data class DeveloperSettings(
     val forceFlush: Boolean = true,
     val bufferStrategy: PacketBufferStrategy = PacketBufferStrategy.SAFE_CURRENT,
     val udpAcceleration: UdpAccelerationSetting = UdpAccelerationSetting.AUTO,
+    val tcpNoDelay: Boolean = true,
+    val socketBufferSizeKb: Int = 0,
+    val tcpKeepaliveSec: Int = 10,
+    val highPriorityThreads: Boolean = true,
     val debugLogLevel: DebugLogLevel = DebugLogLevel.DEBUG
 ) {
     companion object {

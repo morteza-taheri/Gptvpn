@@ -131,6 +131,16 @@ class SoftEtherVpnService : VpnService() {
             private set
         var mDisplaySpeed: Boolean = true
 
+        @Volatile
+        var instance: SoftEtherVpnService? = null
+            private set
+
+        fun isTunnelActive(context: android.content.Context? = null): Boolean {
+            val hasActiveService = instance?.isRunning == true
+            val hasConnectingOrConnectedState = currentState != STATE_DISCONNECTED && currentState != STATE_ERROR
+            return hasActiveService || hasConnectingOrConnectedState
+        }
+
         private val stateListeners = mutableListOf<StateListener>()
         private val trafficListeners = mutableListOf<TrafficListener>()
         private val mainHandler = Handler(Looper.getMainLooper())
@@ -204,13 +214,22 @@ class SoftEtherVpnService : VpnService() {
         }
 
         fun stopVpn(context: android.content.Context) {
+            try {
+                instance?.stopVpn()
+            } catch (e: Exception) {
+                com.softether.SoftEtherVpnService.log("E", TAG, "Error calling direct stopVpn on instance", e)
+            }
             val intent = android.content.Intent(context, SoftEtherVpnService::class.java).apply {
                 action = ACTION_DISCONNECT
             }
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                com.softether.SoftEtherVpnService.log("E", TAG, "Error starting disconnect service intent", e)
             }
         }
 
@@ -270,6 +289,7 @@ class SoftEtherVpnService : VpnService() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         com.softether.SoftEtherVpnService.log("D", TAG, "Service created")
         createNotificationChannel()
         registerNetworkReceiver()
@@ -399,6 +419,9 @@ class SoftEtherVpnService : VpnService() {
     override fun onDestroy() {
         super.onDestroy()
         com.softether.SoftEtherVpnService.log("D", TAG, "Service destroyed")
+        if (instance == this) {
+            instance = null
+        }
         
         // Cancel any ongoing connection attempt
         connectionJob?.cancel()
@@ -516,6 +539,12 @@ class SoftEtherVpnService : VpnService() {
         val currentInterface = vpnInterface
         controller = null
         vpnInterface = null
+
+        try {
+            currentInterface?.close()
+        } catch (e: Exception) {
+            com.softether.SoftEtherVpnService.log("E", TAG, "Error closing VPN interface in stopVpn", e)
+        }
 
         // Clean up resources on a background thread WITHOUT calling the
         // blocking graceful disconnect (nativeDisconnect waits for server

@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Security
@@ -66,6 +67,7 @@ import com.softether.model.DeveloperSettings
 import com.softether.model.FlushStrategy
 import com.softether.model.PacketLogLevel
 import com.softether.model.TunnelDiagnostics
+import com.softether.model.UdpAccelerationSetting
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -773,7 +775,158 @@ fun DeveloperPerformanceSection(
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
 
-                // 6. Diagnostics Refresh Interval
+                // 7. TCP Socket Buffer Size (SO_RCVBUF / SO_SNDBUF)
+                Column {
+                    Text(
+                        text = strings.socketBufferSizeLabel,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(
+                            0 to "Auto (OS)",
+                            256 to "256 KB",
+                            512 to "512 KB",
+                            1024 to "1 MB",
+                            2048 to "2 MB",
+                            4096 to "4 MB"
+                        ).forEach { (sizeKb, label) ->
+                            FilterChip(
+                                selected = devSettings.socketBufferSizeKb == sizeKb,
+                                onClick = { viewModel.setDeveloperSocketBufferSize(sizeKb) },
+                                label = { Text(label, fontSize = 11.sp) }
+                            )
+                        }
+                    }
+                    Text(
+                        text = "Larger buffers (1MB - 2MB) allow full bandwidth saturation on high-speed internet",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp
+                    )
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+                // 8. TCP_NODELAY (Disable Nagle)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = strings.tcpNoDelayLabel,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = if (devSettings.tcpNoDelay) "Enabled (Default - 0ms ACK delay, lowest ping)" else "Disabled (Nagle algorithm buffering enabled)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = devSettings.tcpNoDelay,
+                        onCheckedChange = { viewModel.setDeveloperTcpNoDelay(it) }
+                    )
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+                // 9. UDP Acceleration Mode (RUDP)
+                Column {
+                    Text(
+                        text = strings.udpAccelerationLabel,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        UdpAccelerationSetting.values().forEach { mode ->
+                            FilterChip(
+                                selected = devSettings.udpAcceleration == mode,
+                                onClick = { viewModel.setDeveloperUdpAcceleration(mode) },
+                                label = {
+                                    Text(
+                                        when (mode) {
+                                            UdpAccelerationSetting.AUTO -> "AUTO (Def)"
+                                            UdpAccelerationSetting.ON -> "FORCE ON (RUDP)"
+                                            UdpAccelerationSetting.OFF -> "OFF (TCP Only)"
+                                        },
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+                // 10. High Priority I/O Threads
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = strings.highPriorityThreadsLabel,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = if (devSettings.highPriorityThreads) "Active (Default - Realtime thread priority)" else "Standard priority",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = devSettings.highPriorityThreads,
+                        onCheckedChange = { viewModel.setDeveloperHighPriorityThreads(it) }
+                    )
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+                // 11. TCP Keepalive Interval
+                Column {
+                    Text(
+                        text = strings.tcpKeepaliveLabel,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(
+                            5 to "5s",
+                            10 to "10s (Def)",
+                            15 to "15s",
+                            30 to "30s"
+                        ).forEach { (sec, label) ->
+                            FilterChip(
+                                selected = devSettings.tcpKeepaliveSec == sec,
+                                onClick = { viewModel.setDeveloperTcpKeepalive(sec) },
+                                label = { Text(label, fontSize = 11.sp) }
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+                // 12. Diagnostics Refresh Interval
                 Column {
                     Text(
                         text = strings.statsIntervalLabel,
@@ -802,7 +955,7 @@ fun DeveloperPerformanceSection(
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
 
-                // 7. Real-time Diagnostics Pipeline Toggle
+                // 13. Real-time Diagnostics Pipeline Toggle
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -826,12 +979,37 @@ fun DeveloperPerformanceSection(
                     )
                 }
 
-                // 8. Live Diagnostics Display
+                // 14. Live Diagnostics Display
                 if (devSettings.isPerformanceStatsEnabled) {
                     LiveDiagnosticsCard(strings = strings, diagnostics = diagnostics)
                 }
 
-                // 9. Reset Button
+                // 15. Force Disconnect All Active Connections Button
+                val currentCtx = LocalContext.current
+                OutlinedButton(
+                    onClick = {
+                        viewModel.disconnect(currentCtx)
+                        Toast.makeText(currentCtx, strings.disconnected, Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PowerSettingsNew,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(text = strings.forceDisconnectAll, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                        Text(text = strings.forceDisconnectAllSubtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
+                    }
+                }
+
+                // 16. Reset Defaults Button
                 OutlinedButton(
                     onClick = { viewModel.resetDeveloperSettings() },
                     modifier = Modifier.fillMaxWidth(),

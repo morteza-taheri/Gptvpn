@@ -21,20 +21,20 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-    externalNativeBuild {
-      cmake {
-        cppFlags += "-std=c++11"
-        arguments += "-DANDROID_STL=c++_static"
-      }
-    }
+    // externalNativeBuild {
+    //   cmake {
+    //     cppFlags += "-std=c++11"
+    //     arguments += "-DANDROID_STL=c++_static"
+    //   }
+    // }
   }
 
-  externalNativeBuild {
-    cmake {
-      path = file("src/main/cpp/CMakeLists.txt")
-      version = "3.22.1"
-    }
-  }
+  // externalNativeBuild {
+  //   cmake {
+  //     path = file("src/main/cpp/CMakeLists.txt")
+  //     version = "3.22.1"
+  //   }
+  // }
 
   signingConfigs {
     create("release") {

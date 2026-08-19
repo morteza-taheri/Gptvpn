@@ -20,7 +20,11 @@ class SoftEtherClient {
     var externalHandle: Long = 0
 
     init {
-        System.loadLibrary("softether")
+        try {
+            System.loadLibrary("softether")
+        } catch (e: Throwable) {
+            Log.w(tag, "Native library 'softether' could not be loaded: ${e.message}")
+        }
     }
 
     /**
