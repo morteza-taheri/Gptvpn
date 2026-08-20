@@ -581,7 +581,7 @@ class SoftEtherClient {
             for (i in 31 downTo 0) {
                 if ((m and (1 shl i)) != 0) prefix++ else break
             }
-            return prefix
+            return if (prefix in 1..32) prefix else 24
         }
     }
 }

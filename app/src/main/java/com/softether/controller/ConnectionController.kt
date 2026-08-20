@@ -48,7 +48,7 @@ class ConnectionController(
         private const val TAG = "ConnectionController"
         private const val MAX_RECONNECT_ATTEMPTS = 3
         private const val RECONNECT_DELAY_MS = 3000L
-        private const val DATA_LOOP_DELAY_MS = 1L
+        private const val DATA_LOOP_DELAY_MS = 10L
         private const val STATS_INTERVAL_MS = 1000L
     }
 
@@ -715,6 +715,7 @@ class ConnectionController(
                                 bytesReceived.addAndGet(result.toLong())
                                 packetsReceived.incrementAndGet()
                                 performanceMonitor.recordRxPacket(result, isDetailedStats)
+                                keepAliveManager.recordReceived()
                                 maybePublishTrafficSnapshot()
                             }
                             // Periodically protect additional sockets (multi-connection)
@@ -724,8 +725,7 @@ class ConnectionController(
                             }
                         }
                         result == 0 -> {
-                            // Keepalive or no data, brief delay
-                            keepAliveManager.recordReceived()
+                            // No data ready (idle interval)
                             delay(DATA_LOOP_DELAY_MS)
                         }
                         result < 0 -> {

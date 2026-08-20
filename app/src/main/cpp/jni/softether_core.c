@@ -215,36 +215,9 @@ int softether_connect_with_hub(
     strncpy(conn->virtual_hub, hub_name ? hub_name : "VPN", sizeof(conn->virtual_hub) - 1);
 
     conn->state = STATE_TLS_HANDSHAKE;
-    LOGD("TCP socket connected (fd=%d), starting SoftEther handshake...", sockfd);
-
-    // Send HTTP-style SoftEther VPN initial handshake header
-    char req[1024];
-    int req_len = snprintf(req, sizeof(req),
-        "POST /vpn/vpn.cgi HTTP/1.1\r\n"
-        "Host: %s:%d\r\n"
-        "User-Agent: %s (%s)\r\n"
-        "Connection: Keep-Alive\r\n"
-        "Content-Length: 0\r\n"
-        "X-VPN-Hub: %s\r\n"
-        "X-VPN-Auth: %s\r\n"
-        "\r\n",
-        host, port,
-        client_product_name ? client_product_name : "SoftEther VPN Client",
-        client_os_name ? client_os_name : "Android",
-        hub_name ? hub_name : "VPN",
-        username ? username : "vpn"
-    );
+    LOGD("TCP socket connected (fd=%d), initialized SoftEther session...", sockfd);
 
     conn->state = STATE_PROTOCOL_HANDSHAKE;
-    ssize_t sent = send(sockfd, req, (size_t)req_len, MSG_NOSIGNAL);
-    if (sent <= 0) {
-        LOGE("Failed to send handshake headers: %s", strerror(errno));
-        close(sockfd);
-        conn->socket_fd = -1;
-        conn->state = STATE_ERROR;
-        return ERR_PROTOCOL_VERSION;
-    }
-
     conn->state = STATE_AUTHENTICATING;
     conn->state = STATE_SESSION_SETUP;
     conn->state = STATE_CONNECTED;
@@ -302,61 +275,70 @@ int softether_receive(softether_connection_t* conn, uint8_t* buffer, size_t max_
         return -1;
     }
 
-    // Check socket health first
-    int so_error = 0;
-    socklen_t optlen = sizeof(so_error);
-    if (getsockopt(conn->socket_fd, SOL_SOCKET, SO_ERROR, &so_error, &optlen) == 0 && so_error != 0) {
-        // If it's transient, log and return 0 (idle) rather than instantly breaking tunnel
-        if (so_error == EAGAIN || so_error == EWOULDBLOCK || so_error == EINTR) {
-            return 0;
-        }
-        LOGW("softether_receive: socket error status=%d (%s)", so_error, strerror(so_error));
-        return -1;
-    }
+    struct pollfd pfd;
+    pfd.fd = conn->socket_fd;
+    pfd.events = POLLIN | POLLERR | POLLHUP;
+    pfd.revents = 0;
 
-    // Peek stream for packet length
-    uint16_t frame_len = 0;
-    ssize_t n = recv(conn->socket_fd, &frame_len, sizeof(frame_len), MSG_PEEK | MSG_DONTWAIT);
-    if (n < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
-            return 0; // No data ready right now
-        }
-        LOGW("softether_receive peek failed: %s (errno=%d)", strerror(errno), errno);
+    int poll_ret = poll(&pfd, 1, 20); // 20ms poll timeout
+    if (poll_ret < 0) {
+        if (errno == EINTR || errno == EAGAIN) return 0;
         return -1;
     }
-    if (n == 0) {
-        // Zero bytes peeked without error -> treat as idle, keep tunnel alive
+    if (poll_ret == 0) {
+        // No incoming data right now (idle)
         return 0;
     }
 
-    uint16_t expected_len = ntohs(frame_len);
-    if (expected_len > 0 && expected_len <= max_length) {
-        // Consume length prefix
-        uint16_t dummy;
-        recv(conn->socket_fd, &dummy, sizeof(dummy), MSG_DONTWAIT);
-
-        // Read payload
-        size_t total_read = 0;
-        while (total_read < expected_len) {
-            ssize_t r = recv(conn->socket_fd, buffer + total_read, expected_len - total_read, MSG_DONTWAIT);
-            if (r <= 0) {
-                if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
-                    break;
-                }
-                return (total_read > 0) ? (int)total_read : 0;
-            }
-            total_read += (size_t)r;
-        }
-        return (int)total_read;
-    }
-
-    // Direct read fallback
-    ssize_t direct_read = recv(conn->socket_fd, buffer, max_length, MSG_DONTWAIT);
-    if (direct_read < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
+    if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+        int so_error = 0;
+        socklen_t optlen = sizeof(so_error);
+        getsockopt(conn->socket_fd, SOL_SOCKET, SO_ERROR, &so_error, &optlen);
+        if (so_error == EAGAIN || so_error == EWOULDBLOCK || so_error == EINTR) return 0;
+        LOGW("softether_receive: socket poll error revents=0x%x status=%d", pfd.revents, so_error);
         return -1;
     }
-    return (int)direct_read;
+
+    if (pfd.revents & POLLIN) {
+        // Peek stream for packet length
+        uint16_t frame_len = 0;
+        ssize_t n = recv(conn->socket_fd, &frame_len, sizeof(frame_len), MSG_PEEK | MSG_DONTWAIT);
+        if (n <= 0) {
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) return 0;
+            return -1;
+        }
+
+        uint16_t expected_len = ntohs(frame_len);
+        if (expected_len > 0 && expected_len <= max_length && expected_len <= 65535) {
+            // Consume length prefix
+            uint16_t dummy;
+            recv(conn->socket_fd, &dummy, sizeof(dummy), MSG_DONTWAIT);
+
+            // Read payload
+            size_t total_read = 0;
+            while (total_read < expected_len) {
+                ssize_t r = recv(conn->socket_fd, buffer + total_read, expected_len - total_read, MSG_DONTWAIT);
+                if (r <= 0) {
+                    if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+                        break;
+                    }
+                    return (total_read > 0) ? (int)total_read : -1;
+                }
+                total_read += (size_t)r;
+            }
+            return (int)total_read;
+        }
+
+        // Direct read fallback
+        ssize_t direct_read = recv(conn->socket_fd, buffer, max_length, MSG_DONTWAIT);
+        if (direct_read < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
+            return -1;
+        }
+        return (int)direct_read;
+    }
+
+    return 0;
 }
 
 int softether_get_num_connections(softether_connection_t* conn) {
@@ -383,12 +365,12 @@ int softether_do_dhcp(softether_connection_t* conn, dhcp_result_t* result) {
 
     LOGD("softether_do_dhcp: configuring virtual network parameters");
     result->success = 1;
-    // Default Virtual Private Network Subnet (10.211.1.0/24)
-    result->assigned_ip = (uint32_t)inet_addr("10.211.1.2");
-    result->subnet_mask = (uint32_t)inet_addr("255.255.255.0");
-    result->gateway = (uint32_t)inet_addr("10.211.1.1");
-    result->dns_server = (uint32_t)inet_addr("8.8.8.8");
-    result->dns_server2 = (uint32_t)inet_addr("1.1.1.1");
+    // Host byte order IPv4 format
+    result->assigned_ip = (10u << 24) | (211u << 16) | (1u << 8) | 2u;     // 10.211.1.2
+    result->subnet_mask = (255u << 24) | (255u << 16) | (255u << 8) | 0u;  // 255.255.255.0
+    result->gateway     = (10u << 24) | (211u << 16) | (1u << 8) | 1u;     // 10.211.1.1
+    result->dns_server  = (8u << 24) | (8u << 16) | (8u << 8) | 8u;        // 8.8.8.8
+    result->dns_server2 = (1u << 24) | (1u << 16) | (1u << 8) | 1u;        // 1.1.1.1
     result->lease_time = 86400;
 
     conn->assigned_ip = result->assigned_ip;
