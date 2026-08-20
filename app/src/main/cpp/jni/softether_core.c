@@ -305,11 +305,13 @@ int softether_receive(softether_connection_t* conn, uint8_t* buffer, size_t max_
     // Check socket health first
     int so_error = 0;
     socklen_t optlen = sizeof(so_error);
-    if (getsockopt(conn->socket_fd, SOL_SOCKET, SO_ERROR, &so_error, &optlen) < 0 || so_error != 0) {
-        if (so_error != 0) {
-            LOGW("softether_receive: socket error status=%d (%s)", so_error, strerror(so_error));
-            return -1;
+    if (getsockopt(conn->socket_fd, SOL_SOCKET, SO_ERROR, &so_error, &optlen) == 0 && so_error != 0) {
+        // If it's transient, log and return 0 (idle) rather than instantly breaking tunnel
+        if (so_error == EAGAIN || so_error == EWOULDBLOCK || so_error == EINTR) {
+            return 0;
         }
+        LOGW("softether_receive: socket error status=%d (%s)", so_error, strerror(so_error));
+        return -1;
     }
 
     // Peek stream for packet length

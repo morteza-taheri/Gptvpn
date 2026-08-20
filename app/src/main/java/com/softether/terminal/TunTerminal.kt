@@ -87,14 +87,27 @@ class TunTerminal(
                 if (ipLen < 0) break
                 if (ipLen <= 0) continue
 
-                // Guard: IP version nibble (high 4 bits of byte 0) must be 4 or 6.
+                // IP version nibble (high 4 bits of byte 0)
                 val version = (ipBuffer[0].toInt() ushr 4) and 0x0F
-                if (version != IPV4 && version != IPV6) {
-                    performanceMonitor?.tunTxDrops?.incrementAndGet()
-                    if (packetLogLevel == PacketLogLevel.VERBOSE) {
-                        Log.w(TAG, "TX skipped: non-IP packet (version=0x${version.toString(16)}, len=$ipLen)")
+
+                // Guard: Only process IPv4 or routable global IPv6 packets.
+                // In SoftEther/VPNGate VPNs, virtual hubs only assign and route IPv4.
+                // Sending Android OS IPv6 link-local (fe80::), all-nodes multicast (ff02::),
+                // or router solicitations across the SoftEther L3 channel causes the remote
+                // SoftEther NAT/Hub to reject the stream and RST the connection.
+                if (version != IPV4) {
+                    // Check if IPv6 is link-local (fe80::) or multicast (ff02::)
+                    if (version == IPV6 && ipLen >= 40) {
+                        val isLinkLocalOrMulticast = (ipBuffer[8] == 0xFE.toByte() && (ipBuffer[9].toInt() and 0xC0) == 0x80) ||
+                                (ipBuffer[24] == 0xFF.toByte() && ipBuffer[25] == 0x02.toByte())
+                        if (isLinkLocalOrMulticast) {
+                            // Silently ignore Android OS IPv6 discovery / multicast traffic
+                            continue
+                        }
+                    } else {
+                        performanceMonitor?.tunTxDrops?.incrementAndGet()
+                        continue
                     }
-                    continue
                 }
 
                 txPackets++
