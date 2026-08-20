@@ -447,3 +447,107 @@ JNIEXPORT jbyteArray JNICALL Java_com_softether_client_SoftEtherClient_nativeGet
          conn->gateway_mac[3], conn->gateway_mac[4], conn->gateway_mac[5]);
     return arr;
 }
+
+// Aliases with _1 prefix for methods declared as _native in Kotlin
+JNIEXPORT jlong JNICALL Java_com_softether_client_SoftEtherClient__1nativeCreate(JNIEnv *env, jobject thiz) {
+    return Java_com_softether_client_SoftEtherClient_nativeCreate(env, thiz);
+}
+
+JNIEXPORT void JNICALL Java_com_softether_client_SoftEtherClient__1nativeDestroy(JNIEnv *env, jobject thiz, jlong handle) {
+    Java_com_softether_client_SoftEtherClient_nativeDestroy(env, thiz, handle);
+}
+
+JNIEXPORT jint JNICALL Java_com_softether_client_SoftEtherClient__1nativeConnect(
+    JNIEnv *env, jobject thiz, jlong handle, jstring host, jint port, jstring username, jstring password) {
+    return Java_com_softether_client_SoftEtherClient_nativeConnect(env, thiz, handle, host, port, username, password);
+}
+
+JNIEXPORT jint JNICALL Java_com_softether_client_SoftEtherClient__1nativeConnectWithHub(
+    JNIEnv *env, jobject thiz, jlong handle, jstring host, jint port, 
+    jstring username, jstring password, jstring hubName, jboolean useTcp,
+    jstring clientProductName, jstring clientVersion, jint clientBuild,
+    jstring clientOsName, jstring clientOsVersion, jstring clientOsProductId,
+    jstring clientHostName, jstring clientIpAddress, jint clientPort,
+    jstring serverHostName, jstring serverIpAddress, jint serverPort) {
+    return Java_com_softether_client_SoftEtherClient_nativeConnectWithHub(
+        env, thiz, handle, host, port, username, password, hubName, useTcp,
+        clientProductName, clientVersion, clientBuild, clientOsName, clientOsVersion,
+        clientOsProductId, clientHostName, clientIpAddress, clientPort,
+        serverHostName, serverIpAddress, serverPort);
+}
+
+JNIEXPORT void JNICALL Java_com_softether_client_SoftEtherClient__1nativeDisconnect(JNIEnv *env, jobject thiz, jlong handle) {
+    Java_com_softether_client_SoftEtherClient_nativeDisconnect(env, thiz, handle);
+}
+
+JNIEXPORT jint JNICALL Java_com_softether_client_SoftEtherClient__1nativeGetState(JNIEnv *env, jobject thiz, jlong handle) {
+    return Java_com_softether_client_SoftEtherClient_nativeGetState(env, thiz, handle);
+}
+
+JNIEXPORT jint JNICALL Java_com_softether_client_SoftEtherClient__1nativeSend(
+    JNIEnv *env, jobject thiz, jlong handle, jbyteArray data, jint length) {
+    return Java_com_softether_client_SoftEtherClient_nativeSend(env, thiz, handle, data, length);
+}
+
+JNIEXPORT jint JNICALL Java_com_softether_client_SoftEtherClient__1nativeReceive(
+    JNIEnv *env, jobject thiz, jlong handle, jbyteArray buffer, jint maxLength) {
+    return Java_com_softether_client_SoftEtherClient_nativeReceive(env, thiz, handle, buffer, maxLength);
+}
+
+JNIEXPORT void JNICALL Java_com_softether_client_SoftEtherClient__1nativeSetOption(
+    JNIEnv *env, jobject thiz, jlong handle, jint option, jlong value) {
+    Java_com_softether_client_SoftEtherClient_nativeSetOption(env, thiz, handle, option, value);
+}
+
+JNIEXPORT jint JNICALL Java_com_softether_client_SoftEtherClient__1nativeGetSocketFd(JNIEnv *env, jobject thiz, jlong handle) {
+    return Java_com_softether_client_SoftEtherClient_nativeGetSocketFd(env, thiz, handle);
+}
+
+JNIEXPORT jint JNICALL Java_com_softether_client_SoftEtherClient__1nativeGetRudpSocketFd(JNIEnv *env, jobject thiz, jlong handle) {
+    return Java_com_softether_client_SoftEtherClient_nativeGetRudpSocketFd(env, thiz, handle);
+}
+
+JNIEXPORT jintArray JNICALL Java_com_softether_client_SoftEtherClient__1nativeDoDhcp(JNIEnv *env, jobject thiz, jlong handle) {
+    return Java_com_softether_client_SoftEtherClient_nativeDoDhcp(env, thiz, handle);
+}
+
+JNIEXPORT void JNICALL Java_com_softether_client_SoftEtherClient__1nativeSetAuthType(JNIEnv *env, jobject thiz, jlong handle, jint authType) {
+    Java_com_softether_client_SoftEtherClient_nativeSetAuthType(env, thiz, handle, authType);
+}
+
+JNIEXPORT void JNICALL Java_com_softether_client_SoftEtherClient__1nativeSetMaxConnection(JNIEnv *env, jobject thiz, jlong handle, jint maxConnections) {
+    Java_com_softether_client_SoftEtherClient_nativeSetMaxConnection(env, thiz, handle, maxConnections);
+}
+
+JNIEXPORT jint JNICALL Java_com_softether_client_SoftEtherClient__1nativeGetNumConnections(JNIEnv *env, jobject thiz, jlong handle) {
+    return Java_com_softether_client_SoftEtherClient_nativeGetNumConnections(env, thiz, handle);
+}
+
+JNIEXPORT jintArray JNICALL Java_com_softether_client_SoftEtherClient__1nativeGetAllSocketFds(JNIEnv *env, jobject thiz, jlong handle) {
+    return Java_com_softether_client_SoftEtherClient_nativeGetAllSocketFds(env, thiz, handle);
+}
+
+JNIEXPORT jbyteArray JNICALL Java_com_softether_client_SoftEtherClient__1nativeGetClientMac(JNIEnv *env, jobject thiz, jlong handle) {
+    return Java_com_softether_client_SoftEtherClient_nativeGetClientMac(env, thiz, handle);
+}
+
+JNIEXPORT jbyteArray JNICALL Java_com_softether_client_SoftEtherClient__1nativeGetGatewayMac(JNIEnv *env, jobject thiz, jlong handle) {
+    return Java_com_softether_client_SoftEtherClient_nativeGetGatewayMac(env, thiz, handle);
+}
+
+JNIEXPORT jint JNICALL Java_com_softether_client_SoftEtherClient__1nativeGetRudpVersion(JNIEnv *env, jobject thiz, jlong handle) {
+    return Java_com_softether_client_SoftEtherClient_nativeGetRudpVersion(env, thiz, handle);
+}
+
+JNIEXPORT jboolean JNICALL Java_com_softether_client_SoftEtherClient__1nativeIsRudpEnabled(JNIEnv *env, jobject thiz, jlong handle) {
+    return Java_com_softether_client_SoftEtherClient_nativeIsRudpEnabled(env, thiz, handle);
+}
+
+JNIEXPORT jint JNICALL Java_com_softether_client_SoftEtherClient__1nativeGetServerMaxConnection(JNIEnv *env, jobject thiz, jlong handle) {
+    return Java_com_softether_client_SoftEtherClient_nativeGetServerMaxConnection(env, thiz, handle);
+}
+
+JNIEXPORT jboolean JNICALL Java_com_softether_client_SoftEtherClient__1nativeIsIpv6(JNIEnv *env, jobject thiz, jlong handle) {
+    return Java_com_softether_client_SoftEtherClient_nativeIsIpv6(env, thiz, handle);
+}
+
