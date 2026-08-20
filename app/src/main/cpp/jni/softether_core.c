@@ -290,7 +290,7 @@ int softether_send(softether_connection_t* conn, const uint8_t* data, size_t len
 
     ssize_t ret = sendmsg(conn->socket_fd, &msg, MSG_NOSIGNAL);
     if (ret < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
         LOGW("softether_send error: %s (errno=%d)", strerror(errno), errno);
         return -1;
     }
@@ -302,37 +302,56 @@ int softether_receive(softether_connection_t* conn, uint8_t* buffer, size_t max_
         return -1;
     }
 
-    // Read packet from stream
+    // Check socket health first
+    int so_error = 0;
+    socklen_t optlen = sizeof(so_error);
+    if (getsockopt(conn->socket_fd, SOL_SOCKET, SO_ERROR, &so_error, &optlen) < 0 || so_error != 0) {
+        if (so_error != 0) {
+            LOGW("softether_receive: socket error status=%d (%s)", so_error, strerror(so_error));
+            return -1;
+        }
+    }
+
+    // Peek stream for packet length
     uint16_t frame_len = 0;
     ssize_t n = recv(conn->socket_fd, &frame_len, sizeof(frame_len), MSG_PEEK | MSG_DONTWAIT);
-    if (n <= 0) {
-        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return 0;
+    if (n < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+            return 0; // No data ready right now
+        }
+        LOGW("softether_receive peek failed: %s (errno=%d)", strerror(errno), errno);
         return -1;
+    }
+    if (n == 0) {
+        // Zero bytes peeked without error -> treat as idle, keep tunnel alive
+        return 0;
     }
 
     uint16_t expected_len = ntohs(frame_len);
     if (expected_len > 0 && expected_len <= max_length) {
-        // Read the length prefix
+        // Consume length prefix
         uint16_t dummy;
-        recv(conn->socket_fd, &dummy, sizeof(dummy), 0);
+        recv(conn->socket_fd, &dummy, sizeof(dummy), MSG_DONTWAIT);
 
         // Read payload
         size_t total_read = 0;
         while (total_read < expected_len) {
-            ssize_t r = recv(conn->socket_fd, buffer + total_read, expected_len - total_read, 0);
+            ssize_t r = recv(conn->socket_fd, buffer + total_read, expected_len - total_read, MSG_DONTWAIT);
             if (r <= 0) {
-                if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
-                return -1;
+                if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+                    break;
+                }
+                return (total_read > 0) ? (int)total_read : 0;
             }
             total_read += (size_t)r;
         }
         return (int)total_read;
     }
 
-    // Fallback: direct read
+    // Direct read fallback
     ssize_t direct_read = recv(conn->socket_fd, buffer, max_length, MSG_DONTWAIT);
     if (direct_read < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
         return -1;
     }
     return (int)direct_read;

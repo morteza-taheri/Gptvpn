@@ -223,11 +223,7 @@ class SoftEtherVpnService : VpnService() {
                 action = ACTION_DISCONNECT
             }
             try {
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    context.startForegroundService(intent)
-                } else {
-                    context.startService(intent)
-                }
+                context.startService(intent)
             } catch (e: Exception) {
                 com.softether.SoftEtherVpnService.log("E", TAG, "Error starting disconnect service intent", e)
             }
