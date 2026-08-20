@@ -46,7 +46,7 @@ class SoftEtherClient {
         protectCallback: ((java.net.Socket) -> Boolean)? = null
     ): Boolean {
         return try {
-            com.softether.SoftEtherVpnService.log("D", tag, "Establishing TLS connection to $host:$port (Hub: $hubName)")
+            com.softether.SoftEtherVpnService.log("D", tag, "Establishing protected TLS connection to $host:$port (Hub: $hubName)")
             val trustAllCerts = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
                 override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
                 override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
@@ -57,39 +57,40 @@ class SoftEtherClient {
                 init(null, trustAllCerts, java.security.SecureRandom())
             }
 
-            val socket = sslContext.socketFactory.createSocket() as javax.net.ssl.SSLSocket
-            socket.tcpNoDelay = true
-            socket.keepAlive = true
-            socket.sendBufferSize = 1048576
-            socket.receiveBufferSize = 1048576
-            socket.soTimeout = timeoutMs.coerceAtLeast(10000)
+            // 1. Create underlying plain TCP socket
+            val plainSocket = java.net.Socket()
+            plainSocket.tcpNoDelay = true
+            plainSocket.keepAlive = true
+            plainSocket.sendBufferSize = 1048576
+            plainSocket.receiveBufferSize = 1048576
 
-            // Protect the raw socket from VPN routing loops before connection
-            protectCallback?.invoke(socket)
+            // 2. Protect plain TCP socket from TUN routing loops before connecting
+            val protected = protectCallback?.invoke(plainSocket) ?: false
+            com.softether.SoftEtherVpnService.log("D", tag, "Plain TCP socket protection result: $protected")
 
-            socket.connect(java.net.InetSocketAddress(host, port), timeoutMs.coerceAtLeast(10000))
+            // 3. Connect TCP socket
+            plainSocket.connect(java.net.InetSocketAddress(host, port), timeoutMs.coerceAtLeast(10000))
+
+            // 4. Wrap with TLS SSLSocket
+            val socket = sslContext.socketFactory.createSocket(
+                plainSocket,
+                host,
+                port,
+                true
+            ) as javax.net.ssl.SSLSocket
+            socket.soTimeout = 2000 // 2 second read timeout for non-blocking stream reads
             socket.startHandshake()
+
+            protectCallback?.invoke(socket)
 
             val out = socket.outputStream
             val inStream = socket.inputStream
-
-            // SoftEther VPN initial HTTP handshake header
-            val req = "POST /vpn/vpn.cgi HTTP/1.1\r\n" +
-                    "Host: $host:$port\r\n" +
-                    "User-Agent: SoftEther VPN Client (Android)\r\n" +
-                    "Connection: Keep-Alive\r\n" +
-                    "Content-Length: 0\r\n" +
-                    "X-VPN-Hub: $hubName\r\n" +
-                    "X-VPN-Auth: $username\r\n\r\n"
-
-            out.write(req.toByteArray(Charsets.US_ASCII))
-            out.flush()
 
             sslSocket = socket
             sslInputStream = inStream
             sslOutputStream = out
             isConnected.set(true)
-            com.softether.SoftEtherVpnService.log("D", tag, "TLS connection established successfully to $host:$port")
+            com.softether.SoftEtherVpnService.log("D", tag, "Protected TLS session active to $host:$port")
             true
         } catch (e: Exception) {
             com.softether.SoftEtherVpnService.log("W", tag, "TLS connection attempt failed: ${e.message}")
