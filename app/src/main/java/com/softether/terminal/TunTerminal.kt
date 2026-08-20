@@ -28,6 +28,47 @@ class TunTerminal(
         private const val DEFAULT_BUFFER_SIZE = 65535
         private const val IPV4 = 0x04
         private const val IPV6 = 0x06
+
+        val DEFAULT_GW_MAC = byteArrayOf(0x5E.toByte(), 0x2C.toByte(), 0x9A.toByte(), 0xFF.toByte(), 0x62.toByte(), 0x09.toByte())
+        val DEFAULT_CLIENT_MAC = byteArrayOf(0x5E.toByte(), 0x5C.toByte(), 0xBA.toByte(), 0xE1.toByte(), 0x73.toByte(), 0xEA.toByte())
+
+        fun formatMac(mac: ByteArray?): String {
+            if (mac == null || mac.size < 6) return "null"
+            return mac.take(6).joinToString(":") { "%02X".format(it) }
+        }
+
+        fun formatMac(buffer: ByteArray, offset: Int, length: Int = 6): String {
+            if (offset < 0 || length <= 0 || offset + length > buffer.size) return "null"
+            return (offset until offset + length).joinToString(":") { "%02X".format(buffer[it]) }
+        }
+
+        fun parseIpAddrs(buffer: ByteArray, base: Int = 0): Pair<String, String> {
+            if (base < 0 || base >= buffer.size) return "N/A" to "N/A"
+            val version = (buffer[base].toInt() ushr 4) and 0x0F
+            return if (version == IPV6) {
+                if (buffer.size >= base + 40) {
+                    ipv6ToString(buffer, base + 8) to ipv6ToString(buffer, base + 24)
+                } else "N/A" to "N/A"
+            } else {
+                if (buffer.size >= base + 20) {
+                    ipv4ToString(buffer, base + 12) to ipv4ToString(buffer, base + 16)
+                } else "N/A" to "N/A"
+            }
+        }
+
+        private fun ipv4ToString(b: ByteArray, off: Int): String =
+            "${b[off].toInt() and 0xFF}.${b[off + 1].toInt() and 0xFF}." +
+                "${b[off + 2].toInt() and 0xFF}.${b[off + 3].toInt() and 0xFF}"
+
+        private fun ipv6ToString(b: ByteArray, off: Int): String {
+            val sb = StringBuilder()
+            for (i in 0 until 8) {
+                if (i > 0) sb.append(':')
+                val h = ((b[off + i * 2].toInt() and 0xFF) shl 8) or (b[off + i * 2 + 1].toInt() and 0xFF)
+                sb.append(h.toString(16))
+            }
+            return sb.toString()
+        }
     }
 
     var onPacketReceived: ((ByteArray) -> Unit)? = null
@@ -126,28 +167,32 @@ class TunTerminal(
                     txPackets <= 10 || txPackets % 50L == 0L
                 }
 
+                val proto = if (ipLen > 9) ipBuffer[9].toInt() and 0xFF else 0
+                val enoughForAddr = if (version == IPV6) ipLen >= 40 else ipLen >= 20
+                val (srcIp, dstIp) = if (enoughForAddr) parseIpAddrs(ipBuffer) else "N/A" to "N/A"
+
+                // Construct L2 Ethernet Frame: [6B Dest MAC][6B Src MAC][2B EtherType][L3 IP packet]
+                val l2Frame = ByteArray(14 + ipLen)
+                val dstMac = gatewayMac ?: DEFAULT_GW_MAC
+                val srcMac = clientMac ?: DEFAULT_CLIENT_MAC
+                System.arraycopy(dstMac, 0, l2Frame, 0, 6)
+                System.arraycopy(srcMac, 0, l2Frame, 6, 6)
+                if (version == IPV6) {
+                    l2Frame[12] = 0x86.toByte()
+                    l2Frame[13] = 0xDD.toByte()
+                } else {
+                    l2Frame[12] = 0x08.toByte()
+                    l2Frame[13] = 0x00.toByte()
+                }
+                System.arraycopy(ipBuffer, 0, l2Frame, 14, ipLen)
+
                 if (shouldLogVerbose) {
-                    val proto = if (ipLen > 9) ipBuffer[9].toInt() and 0xFF else 0
-                    val enoughForAddr = if (version == IPV6) ipLen >= 40 else ipLen >= 20
-                    val addrStr = if (enoughForAddr) {
-                        val (srcIp, dstIp) = ipAddrs(ipBuffer)
-                        "$srcIp -> $dstIp"
-                    } else "N/A"
-                    Log.d(TAG, "[DEV PACKET TX] #$txPackets: IP(v$version) $addrStr proto=$proto len=$ipLen")
+                    Log.d(TAG, "[DEV PACKET TX] #$txPackets: IP(v$version) $srcIp -> $dstIp proto=$proto ipLen=$ipLen frameLen=${l2Frame.size} srcMac=${formatMac(srcMac)} dstMac=${formatMac(dstMac)}")
                 } else if (shouldLogBasic) {
-                    val proto = if (ipLen > 9) ipBuffer[9].toInt() and 0xFF else 0
-                    val enoughForAddr = if (version == IPV6) ipLen >= 40 else ipLen >= 20
-                    if (enoughForAddr) {
-                        val (srcIp, dstIp) = ipAddrs(ipBuffer)
-                        Log.d(TAG, "TX #$txPackets: IP(v$version) $srcIp -> $dstIp proto=$proto len=$ipLen | " +
-                                "TUN->Native L3 (packets=$txPackets bytes=$txBytes)")
-                    } else {
-                        Log.d(TAG, "TX #$txPackets: short L3 packet version=0x${version.toString(16)} len=$ipLen | " +
-                                "TUN->Native L3 (packets=$txPackets bytes=$txBytes)")
-                    }
+                    Log.d(TAG, "TX #$txPackets: IP(v$version) $srcIp -> $dstIp proto=$proto ipLen=$ipLen frameLen=${l2Frame.size} srcMac=${formatMac(srcMac)} dstMac=${formatMac(dstMac)} | TUN->Native L2")
                 }
 
-                onPacketReceived?.invoke(ipBuffer.copyOf(ipLen))
+                onPacketReceived?.invoke(l2Frame)
             } catch (e: Exception) {
                 if (isRunning) Log.e(TAG, "Error in TUN read thread: ${e.message}")
                 break

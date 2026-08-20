@@ -307,53 +307,32 @@ class ConnectionController(
         // Build client info (rudpPort will be filled in by native code during RUDP init)
         val clientInfo = buildClientInfo(0)
 
-        // Try establishing direct protected TLS tunnel first (standard for SoftEther/VPNGate servers)
-        val tlsSuccess = client.establishTlsConnection(
-            config.serverHost,
-            config.serverPort,
-            hubName,
-            config.username,
-            config.password,
-            timeoutMs = config.connectTimeoutMs
-        ) { rawSocket ->
-            try {
-                service.protect(rawSocket)
-            } catch (e: Exception) {
-                com.softether.SoftEtherVpnService.log("W", TAG, "Could not protect TLS socket: ${e.message}")
-                false
-            }
-        }
-
-        val result = if (tlsSuccess) {
-            com.softether.SoftEtherVpnService.log("D", TAG, "SoftEther TLS tunnel active and secured")
-            0
-        } else {
-            com.softether.SoftEtherVpnService.log("D", TAG, "Falling back to native SoftEther connection")
-            try {
-                client.nativeConnectWithHub(
-                    nativeHandle,
-                    config.serverHost,
-                    config.serverPort,
-                    config.username,
-                    config.password,
-                    hubName,
-                    config.useTcp,
-                    clientInfo.productName,
-                    clientInfo.productVersion,
-                    clientInfo.productBuild,
-                    clientInfo.osName,
-                    clientInfo.osVersion,
-                    clientInfo.osProductId,
-                    clientInfo.hostName,
-                    clientInfo.clientIpAddress,
-                    clientInfo.clientPort,
-                    clientInfo.serverHostName,
-                    clientInfo.serverIpAddress,
-                    clientInfo.serverPort
-                )
-            } finally {
-                stopNativeStateMonitor()
-            }
+        // Connect using SoftEther native core
+        startNativeStateMonitor()
+        val result = try {
+            client.nativeConnectWithHub(
+                nativeHandle,
+                config.serverHost,
+                config.serverPort,
+                config.username,
+                config.password,
+                hubName,
+                config.useTcp,
+                clientInfo.productName,
+                clientInfo.productVersion,
+                clientInfo.productBuild,
+                clientInfo.osName,
+                clientInfo.osVersion,
+                clientInfo.osProductId,
+                clientInfo.hostName,
+                clientInfo.clientIpAddress,
+                clientInfo.clientPort,
+                clientInfo.serverHostName,
+                clientInfo.serverIpAddress,
+                clientInfo.serverPort
+            )
+        } finally {
+            stopNativeStateMonitor()
         }
 
         // Check if cancelled during connection
@@ -671,11 +650,19 @@ class ConnectionController(
                         performanceMonitor.jniSendBytes.addAndGet(packet.size.toLong())
 
                         val result = client.send(packet)
+
+                        val dstMac = TunTerminal.formatMac(packet, 0, 6)
+                        val srcMac = TunTerminal.formatMac(packet, 6, 6)
+                        val etherType = if (packet.size >= 14) (((packet[12].toInt() and 0xFF) shl 8) or (packet[13].toInt() and 0xFF)) else 0
+                        val isIp = packet.size >= 14 && (etherType == 0x0800 || etherType == 0x86DD)
+                        val version = if (isIp && packet.size >= 15) ((packet[14].toInt() ushr 4) and 0x0F) else 0
+                        val proto = if (isIp && packet.size >= 24) (packet[23].toInt() and 0xFF) else 0
+                        val (srcIp, dstIp) = if (isIp) TunTerminal.parseIpAddrs(packet, 14) else ("N/A" to "N/A")
+
                         if (packetsSent.get() <= 10 || packetsSent.get() % 50L == 0L) {
                             com.softether.SoftEtherVpnService.log(
                                 "D", TAG,
-                                "TX: nativeSend result=$result for ${packet.size} bytes " +
-                                    "(packets=${packetsSent.get()} bytes=${bytesSent.get()})"
+                                "TX: IP(v$version) $srcIp -> $dstIp proto=$proto frameLen=${packet.size} srcMac=$srcMac dstMac=$dstMac nativeSend=$result"
                             )
                         }
                         if (result > 0) {
@@ -723,24 +710,58 @@ class ConnectionController(
                             performanceMonitor.seRxBytes.addAndGet(result.toLong())
                             performanceMonitor.jniRecvPackets.incrementAndGet()
                             performanceMonitor.jniRecvBytes.addAndGet(result.toLong())
-                            performanceMonitor.decapPackets.incrementAndGet()
-                            performanceMonitor.decapBytes.addAndGet(result.toLong())
 
-                            val writeResult = terminal.write(receiveBuffer, 0, result)
-                            if (packetsReceived.get() <= 10 || packetsReceived.get() % 50L == 0L) {
-                                com.softether.SoftEtherVpnService.log(
-                                    "D", TAG,
-                                    "RX: nativeReceive result=$result bytes -> TUN write=$writeResult " +
-                                        "(packets=${packetsReceived.get()} bytes=${bytesReceived.get()})"
-                                )
+                            if (result >= 14) {
+                                val dstMac = TunTerminal.formatMac(receiveBuffer, 0, 6)
+                                val srcMac = TunTerminal.formatMac(receiveBuffer, 6, 6)
+                                val etherType = ((receiveBuffer[12].toInt() and 0xFF) shl 8) or (receiveBuffer[13].toInt() and 0xFF)
+
+                                if (etherType == 0x0800 || etherType == 0x86DD) {
+                                    val ipPayloadLen = result - 14
+                                    val version = (receiveBuffer[14].toInt() ushr 4) and 0x0F
+                                    val (srcIp, dstIp) = TunTerminal.parseIpAddrs(receiveBuffer, 14)
+
+                                    performanceMonitor.decapPackets.incrementAndGet()
+                                    performanceMonitor.decapBytes.addAndGet(ipPayloadLen.toLong())
+
+                                    val writeResult = terminal.write(receiveBuffer, 14, ipPayloadLen)
+                                    if (writeResult > 0) {
+                                        bytesReceived.addAndGet(ipPayloadLen.toLong())
+                                        packetsReceived.incrementAndGet()
+                                        performanceMonitor.recordRxPacket(ipPayloadLen, isDetailedStats)
+                                        keepAliveManager.recordReceived()
+                                        maybePublishTrafficSnapshot()
+                                    }
+
+                                    if (packetsReceived.get() <= 10 || packetsReceived.get() % 50L == 0L) {
+                                        com.softether.SoftEtherVpnService.log(
+                                            "D", TAG,
+                                            "RX: nativeReceive=$result frameLen=$result EtherType=0x${"%04X".format(etherType)} " +
+                                                "srcMac=$srcMac dstMac=$dstMac IP(v$version) $srcIp -> $dstIp " +
+                                                "rxPackets=${packetsReceived.get()} rxBytes=${bytesReceived.get()}"
+                                        )
+                                    }
+                                } else if (etherType == 0x0806) {
+                                    // ARP frame from SoftEther virtual hub
+                                    if (packetsReceived.get() <= 5) {
+                                        com.softether.SoftEtherVpnService.log(
+                                            "D", TAG,
+                                            "RX [L2 ARP]: nativeReceive=$result frameLen=$result EtherType=0x0806 srcMac=$srcMac dstMac=$dstMac (skipped for TUN)"
+                                        )
+                                    }
+                                } else {
+                                    // Other L2 frames
+                                    if (packetsReceived.get() <= 5) {
+                                        com.softether.SoftEtherVpnService.log(
+                                            "D", TAG,
+                                            "RX [L2 Other]: nativeReceive=$result frameLen=$result EtherType=0x${"%04X".format(etherType)} srcMac=$srcMac dstMac=$dstMac (skipped for TUN)"
+                                        )
+                                    }
+                                }
+                            } else {
+                                com.softether.SoftEtherVpnService.log("W", TAG, "RX short frame dropped: len=$result < 14 bytes")
                             }
-                            if (writeResult > 0) {
-                                bytesReceived.addAndGet(result.toLong())
-                                packetsReceived.incrementAndGet()
-                                performanceMonitor.recordRxPacket(result, isDetailedStats)
-                                keepAliveManager.recordReceived()
-                                maybePublishTrafficSnapshot()
-                            }
+
                             // Periodically protect additional sockets (multi-connection)
                             receiveCount++
                             if (receiveCount % 50 == 0) {
@@ -860,46 +881,25 @@ class ConnectionController(
             val effectiveMaxConn = if (devSettings.isDeveloperModeEnabled) devSettings.maxConnections.coerceIn(1, 32) else 1
             client.nativeSetMaxConnection(nativeHandle, effectiveMaxConn)
 
-            // Try establishing direct protected TLS tunnel first on reconnect
-            val tlsSuccess = client.establishTlsConnection(
-                config.serverHost,
-                config.serverPort,
-                hubName,
-                config.username,
-                config.password,
-                timeoutMs = config.connectTimeoutMs
-            ) { rawSocket ->
-                try {
-                    service.protect(rawSocket)
-                } catch (e: Exception) {
-                    com.softether.SoftEtherVpnService.log("W", TAG, "Could not protect TLS socket on reconnect: ${e.message}")
-                    false
-                }
-            }
-
-            val result = if (tlsSuccess) {
-                com.softether.SoftEtherVpnService.log("D", TAG, "Reconnected via SoftEther TLS tunnel")
-                0
-            } else {
-                startNativeStateMonitor()
-                val reconnectClientInfo = buildClientInfo(0)
-                try {
-                    client.nativeConnectWithHub(
-                        nativeHandle,
-                        config.serverHost,
-                        config.serverPort,
-                        config.username,
-                        config.password,
-                        hubName,
-                        config.useTcp,
-                        reconnectClientInfo.productName, reconnectClientInfo.productVersion, reconnectClientInfo.productBuild,
-                        reconnectClientInfo.osName, reconnectClientInfo.osVersion, reconnectClientInfo.osProductId,
-                        reconnectClientInfo.hostName, reconnectClientInfo.clientIpAddress, reconnectClientInfo.clientPort,
-                        reconnectClientInfo.serverHostName, reconnectClientInfo.serverIpAddress, reconnectClientInfo.serverPort
-                    )
-                } finally {
-                    stopNativeStateMonitor()
-                }
+            // Connect to server using SoftEther native core
+            startNativeStateMonitor()
+            val reconnectClientInfo = buildClientInfo(0)
+            val result = try {
+                client.nativeConnectWithHub(
+                    nativeHandle,
+                    config.serverHost,
+                    config.serverPort,
+                    config.username,
+                    config.password,
+                    hubName,
+                    config.useTcp,
+                    reconnectClientInfo.productName, reconnectClientInfo.productVersion, reconnectClientInfo.productBuild,
+                    reconnectClientInfo.osName, reconnectClientInfo.osVersion, reconnectClientInfo.osProductId,
+                    reconnectClientInfo.hostName, reconnectClientInfo.clientIpAddress, reconnectClientInfo.clientPort,
+                    reconnectClientInfo.serverHostName, reconnectClientInfo.serverIpAddress, reconnectClientInfo.serverPort
+                )
+            } finally {
+                stopNativeStateMonitor()
             }
 
             if (result != 0) {
