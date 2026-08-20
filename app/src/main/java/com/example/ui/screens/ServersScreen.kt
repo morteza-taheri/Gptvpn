@@ -296,6 +296,7 @@ fun ServersScreen(
                     items(servers, key = { it.id }) { server ->
                         ServerCard(
                             server = server,
+                            strings = strings,
                             isSelected = selectedServer?.id == server.id,
                             isConnected = (vpnState is VpnState.Connected) && selectedServer?.id == server.id,
                             onSelect = {

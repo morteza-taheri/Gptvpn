@@ -119,7 +119,14 @@ data class Strings(
     val highPriorityThreadsLabel: String,
     val tcpKeepaliveLabel: String,
     val forceDisconnectAll: String,
-    val forceDisconnectAllSubtitle: String
+    val forceDisconnectAllSubtitle: String,
+    val tcpPortLabel: String,
+    val udpPortLabel: String,
+    val totalTrafficLabel: String,
+    val totalUsersLabel: String,
+    val activeSessionsLabel: String,
+    val logPolicyLabel: String,
+    val candidatePortsLabel: String
 )
 
 object Localization {
@@ -242,7 +249,14 @@ object Localization {
         highPriorityThreadsLabel = "High Priority I/O Worker Threads",
         tcpKeepaliveLabel = "TCP Keepalive Interval (seconds)",
         forceDisconnectAll = "Force Disconnect All Connections",
-        forceDisconnectAllSubtitle = "Immediately kill all active sockets, TUN interface, and reset service state"
+        forceDisconnectAllSubtitle = "Immediately kill all active sockets, TUN interface, and reset service state",
+        tcpPortLabel = "TCP Port",
+        udpPortLabel = "UDP Port",
+        totalTrafficLabel = "Total Traffic",
+        totalUsersLabel = "Total Users",
+        activeSessionsLabel = "Active Sessions",
+        logPolicyLabel = "Log Policy",
+        candidatePortsLabel = "Candidate Ports"
     )
 
     val fa = Strings(
@@ -364,7 +378,14 @@ object Localization {
         highPriorityThreadsLabel = "اولویت بالای ترد‌های پردازش ترافیک (High Priority I/O)",
         tcpKeepaliveLabel = "فاصله زمانی ارسال بسته زنده نگهدارنده TCP (ثانیه)",
         forceDisconnectAll = "قطع اجباری و بستن تمام اتصالات فعال",
-        forceDisconnectAllSubtitle = "بستن تمام سوکت‌های باز، آزادسازی رابط TUN و ریست وضعیت سرویس"
+        forceDisconnectAllSubtitle = "بستن تمام سوکت‌های باز، آزادسازی رابط TUN و ریست وضعیت سرویس",
+        tcpPortLabel = "پورت TCP",
+        udpPortLabel = "پورت UDP",
+        totalTrafficLabel = "ترافیک کل تبادل‌شده",
+        totalUsersLabel = "کل کاربران",
+        activeSessionsLabel = "نشست‌های آنلاین",
+        logPolicyLabel = "سیاست ثبت لاگ",
+        candidatePortsLabel = "پورت‌های پشتیبانی‌شده"
     )
 
     fun get(lang: String): Strings = if (lang == "fa") fa else en

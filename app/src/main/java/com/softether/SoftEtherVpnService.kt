@@ -264,7 +264,12 @@ class SoftEtherVpnService : VpnService() {
         }
     }
 
-    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val coroutineExceptionHandler = kotlinx.coroutines.CoroutineExceptionHandler { _, throwable ->
+        com.softether.SoftEtherVpnService.log("E", TAG, "Unhandled coroutine error in VPN service: ${throwable.message}", throwable)
+        mIsUserDisconnect = false
+        stopVpn()
+    }
+    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob() + coroutineExceptionHandler)
     private var controller: ConnectionController? = null
     private var vpnInterface: ParcelFileDescriptor? = null
     private var isRunning = false
@@ -495,9 +500,8 @@ class SoftEtherVpnService : VpnService() {
                 com.softether.SoftEtherVpnService.log("D", TAG, "Connection cancelled by user")
                 mIsUserDisconnect = true
                 sendConnectionStateBroadcast(STATE_DISCONNECTED)
-            } catch (e: Exception) {
-                com.softether.SoftEtherVpnService.log("E", TAG, "Failed to start VPN", e)
-                // updateNotification("Connection failed: ${e.message}")
+            } catch (t: Throwable) {
+                com.softether.SoftEtherVpnService.log("E", TAG, "Failed to start VPN: ${t.message}", t)
                 mIsUserDisconnect = false
                 stopVpn()
             }

@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * SoftEtherClient - JNI bridge wrapper to native SoftEther implementation
- * Provides high-level API for connection management
+ * Provides high-level API for connection management with safe fallback protection.
  */
 class SoftEtherClient {
 
@@ -19,22 +19,10 @@ class SoftEtherClient {
     @Volatile
     var externalHandle: Long = 0
 
-    init {
-        try {
-            System.loadLibrary("softether")
-        } catch (e: Throwable) {
-            Log.w(tag, "Native library 'softether' could not be loaded: ${e.message}")
-        }
-    }
+    fun isAvailable(): Boolean = isLibraryLoaded
 
     /**
      * Connect to SoftEther VPN server
-     *
-     * @param host Server hostname or IP address
-     * @param port Server port (typically 443, 992, or 5555)
-     * @param username Authentication username
-     * @param password Authentication password
-     * @throws ConnectionException if connection fails
      */
     @Throws(ConnectionException::class)
     fun connect(host: String, port: Int, username: String, password: String) {
@@ -43,13 +31,6 @@ class SoftEtherClient {
 
     /**
      * Connect to SoftEther VPN server with hub name
-     *
-     * @param host Server hostname or IP address
-     * @param port Server port (typically 443, 992, or 5555)
-     * @param username Authentication username
-     * @param password Authentication password
-     * @param hubName Virtual hub name (default: "VPN" for VPNGate)
-     * @throws ConnectionException if connection fails
      */
     @Throws(ConnectionException::class)
     fun connect(host: String, port: Int, username: String, password: String, hubName: String) {
@@ -58,17 +39,12 @@ class SoftEtherClient {
 
     /**
      * Connect to SoftEther VPN server with hub name and explicit auth method
-     *
-     * @param host Server hostname or IP address
-     * @param port Server port (typically 443, 992, or 5555)
-     * @param username Authentication username
-     * @param password Authentication password
-     * @param hubName Virtual hub name (default: "VPN" for VPNGate)
-     * @param authMethod Authentication method to use
-     * @throws ConnectionException if connection fails
      */
     @Throws(ConnectionException::class)
     fun connect(host: String, port: Int, username: String, password: String, hubName: String, authMethod: com.softether.model.AuthMethod = com.softether.model.AuthMethod.AUTO) {
+        if (!isLibraryLoaded) {
+            throw ConnectionException("Native SoftEther engine (libsoftether.so) is not loaded.")
+        }
         com.softether.SoftEtherVpnService.log("D", tag, "Connecting to $host:$port as $username (hub: $hubName, auth: $authMethod)")
 
         // Create native connection
@@ -121,10 +97,6 @@ class SoftEtherClient {
         com.softether.SoftEtherVpnService.log("D", tag, "Connected successfully")
     }
 
-    /**
-     * Set authentication type explicitly before connecting.
-     * @param authMethod The authentication method to use
-     */
     fun setAuthType(authMethod: com.softether.model.AuthMethod) {
         if (nativeHandle == 0L) return
         val authTypeInt = when (authMethod) {
@@ -136,36 +108,21 @@ class SoftEtherClient {
         nativeSetAuthType(nativeHandle, authTypeInt)
     }
 
-    /**
-     * Set the maximum number of TCP connections for multi-connection support
-     * @param maxConnections Target number of connections (1-8, default 4)
-     */
     fun setMaxConnection(maxConnections: Int) {
         if (nativeHandle == 0L) return
         nativeSetMaxConnection(nativeHandle, maxConnections.coerceIn(1, 8))
     }
 
-    /**
-     * Get the current number of active TCP connections (primary + additional)
-     * @return Number of active connections
-     */
     fun getNumConnections(): Int {
         if (nativeHandle == 0L) return 0
         return nativeGetNumConnections(nativeHandle)
     }
 
-    /**
-     * Get all active TCP socket FDs (primary + additional) for VpnService.protect()
-     * @return Array of socket FDs, or null if none
-     */
     fun getAllSocketFds(): IntArray? {
         if (nativeHandle == 0L) return null
         return nativeGetAllSocketFds(nativeHandle)
     }
 
-    /**
-     * Disconnect from VPN server
-     */
     fun disconnect() {
         if (!isConnected.getAndSet(false) || nativeHandle == 0L) {
             return
@@ -178,86 +135,59 @@ class SoftEtherClient {
         com.softether.SoftEtherVpnService.log("D", tag, "Disconnected")
     }
 
-    /**
-     * Send data through the VPN tunnel
-     *
-     * @param data Data to send
-     * @return Number of bytes sent, or -1 on error
-     */
     fun send(data: ByteArray): Int {
         val handle = externalHandle.takeIf { it != 0L } ?: nativeHandle
         if (handle == 0L) return -1
         return nativeSend(handle, data, data.size)
     }
 
-    /**
-     * Receive data from the VPN tunnel
-     *
-     * @param buffer Buffer to store received data
-     * @return Number of bytes received, 0 for keepalive, or -1 on error
-     */
     fun receive(buffer: ByteArray): Int {
         val handle = externalHandle.takeIf { it != 0L } ?: nativeHandle
         if (handle == 0L) return -1
         return nativeReceive(handle, buffer, buffer.size)
     }
 
-    /**
-     * Check if currently connected
-     */
     fun isConnected(): Boolean = isConnected.get()
 
-    /**
-     * Set connection timeout
-     *
-     * @param timeoutMs Timeout in milliseconds
-     */
     fun setTimeout(timeoutMs: Int) {
         if (nativeHandle != 0L) {
             nativeSetOption(nativeHandle, OPTION_TIMEOUT, timeoutMs.toLong())
         }
     }
 
-    /**
-     * Set keepalive interval
-     *
-     * @param intervalMs Keepalive interval in milliseconds
-     */
     fun setKeepAliveInterval(intervalMs: Int) {
         if (nativeHandle != 0L) {
             nativeSetOption(nativeHandle, OPTION_KEEPALIVE_INTERVAL, intervalMs.toLong())
         }
     }
 
-    /**
-     * Set MTU for the connection
-     *
-     * @param mtu Maximum Transmission Unit
-     */
     fun setMtu(mtu: Int) {
         if (nativeHandle != 0L) {
             nativeSetOption(nativeHandle, OPTION_MTU, mtu.toLong())
         }
     }
 
-    /**
-     * Cleanup resources
-     */
     fun cleanup() {
         disconnect()
     }
 
-    // Native methods
-    external fun nativeCreate(): Long
-    external fun nativeDestroy(handle: Long)
-    external fun nativeConnect(
-        handle: Long,
-        host: String,
-        port: Int,
-        username: String,
-        password: String
-    ): Int
-    external fun nativeConnectWithHub(
+    // Safe wrappers around native methods to prevent UnsatisfiedLinkError crashes
+    fun nativeCreate(): Long {
+        if (!isLibraryLoaded) return 0L
+        return try { _nativeCreate() } catch (t: Throwable) { Log.e(tag, "nativeCreate error", t); 0L }
+    }
+
+    fun nativeDestroy(handle: Long) {
+        if (!isLibraryLoaded || handle == 0L) return
+        try { _nativeDestroy(handle) } catch (t: Throwable) { Log.e(tag, "nativeDestroy error", t) }
+    }
+
+    fun nativeConnect(handle: Long, host: String, port: Int, username: String, password: String): Int {
+        if (!isLibraryLoaded || handle == 0L) return SoftEtherError.ERR_UNKNOWN
+        return try { _nativeConnect(handle, host, port, username, password) } catch (t: Throwable) { Log.e(tag, "nativeConnect error", t); SoftEtherError.ERR_UNKNOWN }
+    }
+
+    fun nativeConnectWithHub(
         handle: Long,
         host: String,
         port: Int,
@@ -277,25 +207,111 @@ class SoftEtherClient {
         serverHostName: String,
         serverIpAddress: String,
         serverPort: Int
-    ): Int
-    external fun nativeDisconnect(handle: Long)
-    external fun nativeGetState(handle: Long): Int
-    external fun nativeSend(handle: Long, data: ByteArray, length: Int): Int
-    external fun nativeReceive(handle: Long, buffer: ByteArray, maxLength: Int): Int
-    external fun nativeSetOption(handle: Long, option: Int, value: Long)
-    external fun nativeGetSocketFd(handle: Long): Int
-    external fun nativeGetRudpSocketFd(handle: Long): Int
-    external fun nativeDoDhcp(handle: Long): IntArray?
-    external fun nativeSetAuthType(handle: Long, authType: Int)
-    external fun nativeSetMaxConnection(handle: Long, maxConnections: Int)
-    external fun nativeGetNumConnections(handle: Long): Int
-    external fun nativeGetAllSocketFds(handle: Long): IntArray?
-    external fun nativeGetClientMac(handle: Long): ByteArray?
-    external fun nativeGetGatewayMac(handle: Long): ByteArray?
-    external fun nativeGetRudpVersion(handle: Long): Int
-    external fun nativeIsRudpEnabled(handle: Long): Boolean
-    external fun nativeGetServerMaxConnection(handle: Long): Int
-    external fun nativeIsIpv6(handle: Long): Boolean
+    ): Int {
+        if (!isLibraryLoaded || handle == 0L) return SoftEtherError.ERR_UNKNOWN
+        return try {
+            _nativeConnectWithHub(
+                handle, host, port, username, password, hubName, useTcp,
+                clientProductName, clientVersion, clientBuild,
+                clientOsName, clientOsVersion, clientOsProductId,
+                clientHostName, clientIpAddress, clientPort,
+                serverHostName, serverIpAddress, serverPort
+            )
+        } catch (t: Throwable) {
+            Log.e(tag, "nativeConnectWithHub error", t)
+            SoftEtherError.ERR_UNKNOWN
+        }
+    }
+
+    fun nativeDisconnect(handle: Long) {
+        if (!isLibraryLoaded || handle == 0L) return
+        try { _nativeDisconnect(handle) } catch (t: Throwable) { Log.e(tag, "nativeDisconnect error", t) }
+    }
+
+    fun nativeGetState(handle: Long): Int {
+        if (!isLibraryLoaded || handle == 0L) return 0
+        return try { _nativeGetState(handle) } catch (t: Throwable) { 0 }
+    }
+
+    fun nativeSend(handle: Long, data: ByteArray, length: Int): Int {
+        if (!isLibraryLoaded || handle == 0L) return -1
+        return try { _nativeSend(handle, data, length) } catch (t: Throwable) { -1 }
+    }
+
+    fun nativeReceive(handle: Long, buffer: ByteArray, maxLength: Int): Int {
+        if (!isLibraryLoaded || handle == 0L) return -1
+        return try { _nativeReceive(handle, buffer, maxLength) } catch (t: Throwable) { -1 }
+    }
+
+    fun nativeSetOption(handle: Long, option: Int, value: Long) {
+        if (!isLibraryLoaded || handle == 0L) return
+        try { _nativeSetOption(handle, option, value) } catch (t: Throwable) { Log.e(tag, "nativeSetOption error", t) }
+    }
+
+    fun nativeGetSocketFd(handle: Long): Int {
+        if (!isLibraryLoaded || handle == 0L) return -1
+        return try { _nativeGetSocketFd(handle) } catch (t: Throwable) { -1 }
+    }
+
+    fun nativeGetRudpSocketFd(handle: Long): Int {
+        if (!isLibraryLoaded || handle == 0L) return -1
+        return try { _nativeGetRudpSocketFd(handle) } catch (t: Throwable) { -1 }
+    }
+
+    fun nativeDoDhcp(handle: Long): IntArray? {
+        if (!isLibraryLoaded || handle == 0L) return null
+        return try { _nativeDoDhcp(handle) } catch (t: Throwable) { null }
+    }
+
+    fun nativeSetAuthType(handle: Long, authType: Int) {
+        if (!isLibraryLoaded || handle == 0L) return
+        try { _nativeSetAuthType(handle, authType) } catch (t: Throwable) { Log.e(tag, "nativeSetAuthType error", t) }
+    }
+
+    fun nativeSetMaxConnection(handle: Long, maxConnections: Int) {
+        if (!isLibraryLoaded || handle == 0L) return
+        try { _nativeSetMaxConnection(handle, maxConnections) } catch (t: Throwable) { Log.e(tag, "nativeSetMaxConnection error", t) }
+    }
+
+    fun nativeGetNumConnections(handle: Long): Int {
+        if (!isLibraryLoaded || handle == 0L) return 0
+        return try { _nativeGetNumConnections(handle) } catch (t: Throwable) { 0 }
+    }
+
+    fun nativeGetAllSocketFds(handle: Long): IntArray? {
+        if (!isLibraryLoaded || handle == 0L) return null
+        return try { _nativeGetAllSocketFds(handle) } catch (t: Throwable) { null }
+    }
+
+    fun nativeGetClientMac(handle: Long): ByteArray? {
+        if (!isLibraryLoaded || handle == 0L) return null
+        return try { _nativeGetClientMac(handle) } catch (t: Throwable) { null }
+    }
+
+    fun nativeGetGatewayMac(handle: Long): ByteArray? {
+        if (!isLibraryLoaded || handle == 0L) return null
+        return try { _nativeGetGatewayMac(handle) } catch (t: Throwable) { null }
+    }
+
+    fun nativeGetRudpVersion(handle: Long): Int {
+        if (!isLibraryLoaded || handle == 0L) return 0
+        return try { _nativeGetRudpVersion(handle) } catch (t: Throwable) { 0 }
+    }
+
+    fun nativeIsRudpEnabled(handle: Long): Boolean {
+        if (!isLibraryLoaded || handle == 0L) return false
+        return try { _nativeIsRudpEnabled(handle) } catch (t: Throwable) { false }
+    }
+
+    fun nativeGetServerMaxConnection(handle: Long): Int {
+        if (!isLibraryLoaded || handle == 0L) return 0
+        return try { _nativeGetServerMaxConnection(handle) } catch (t: Throwable) { 0 }
+    }
+
+    fun nativeIsIpv6(handle: Long): Boolean {
+        if (!isLibraryLoaded || handle == 0L) return false
+        return try { _nativeIsIpv6(handle) } catch (t: Throwable) { false }
+    }
 
     fun getRudpVersion(handle: Long = externalHandle.takeIf { it != 0L } ?: nativeHandle): Int {
         if (handle == 0L) return 0
@@ -317,11 +333,6 @@ class SoftEtherClient {
         return nativeIsIpv6(handle)
     }
 
-    /**
-     * Perform DHCP over SoftEther tunnel to get IP configuration
-     * @param handle Native connection handle (from ConnectionController)
-     * @return DhcpResult or null on failure
-     */
     fun doDhcp(handle: Long = nativeHandle): DhcpResult? {
         if (handle == 0L) return null
         val arr = nativeDoDhcp(handle) ?: return null
@@ -337,31 +348,88 @@ class SoftEtherClient {
         )
     }
 
-    /**
-     * دریافت مک‌آدرس کلاینت اختصاص‌یافته برای اتصال فعلی
-     */
     fun getClientMac(): ByteArray? {
         val handle = externalHandle.takeIf { it != 0L } ?: nativeHandle
         if (handle == 0L) return null
         return nativeGetClientMac(handle)
     }
 
-    /**
-     * دریافت مک‌آدرس گیت‌وی سرور حاصل از ARP در اتصال فعلی
-     */
     fun getGatewayMac(): ByteArray? {
         val handle = externalHandle.takeIf { it != 0L } ?: nativeHandle
         if (handle == 0L) return null
         return nativeGetGatewayMac(handle)
     }
 
+    // Underlying JNI method declarations
+    private external fun _nativeCreate(): Long
+    private external fun _nativeDestroy(handle: Long)
+    private external fun _nativeConnect(
+        handle: Long,
+        host: String,
+        port: Int,
+        username: String,
+        password: String
+    ): Int
+    private external fun _nativeConnectWithHub(
+        handle: Long,
+        host: String,
+        port: Int,
+        username: String,
+        password: String,
+        hubName: String,
+        useTcp: Boolean,
+        clientProductName: String,
+        clientVersion: String,
+        clientBuild: Int,
+        clientOsName: String,
+        clientOsVersion: String,
+        clientOsProductId: String,
+        clientHostName: String,
+        clientIpAddress: String,
+        clientPort: Int,
+        serverHostName: String,
+        serverIpAddress: String,
+        serverPort: Int
+    ): Int
+    private external fun _nativeDisconnect(handle: Long)
+    private external fun _nativeGetState(handle: Long): Int
+    private external fun _nativeSend(handle: Long, data: ByteArray, length: Int): Int
+    private external fun _nativeReceive(handle: Long, buffer: ByteArray, maxLength: Int): Int
+    private external fun _nativeSetOption(handle: Long, option: Int, value: Long)
+    private external fun _nativeGetSocketFd(handle: Long): Int
+    private external fun _nativeGetRudpSocketFd(handle: Long): Int
+    private external fun _nativeDoDhcp(handle: Long): IntArray?
+    private external fun _nativeSetAuthType(handle: Long, authType: Int)
+    private external fun _nativeSetMaxConnection(handle: Long, maxConnections: Int)
+    private external fun _nativeGetNumConnections(handle: Long): Int
+    private external fun _nativeGetAllSocketFds(handle: Long): IntArray?
+    private external fun _nativeGetClientMac(handle: Long): ByteArray?
+    private external fun _nativeGetGatewayMac(handle: Long): ByteArray?
+    private external fun _nativeGetRudpVersion(handle: Long): Int
+    private external fun _nativeIsRudpEnabled(handle: Long): Boolean
+    private external fun _nativeGetServerMaxConnection(handle: Long): Int
+    private external fun _nativeIsIpv6(handle: Long): Boolean
+
     companion object {
-        // Option types for nativeSetOption
+        private const val TAG = "SoftEtherClient"
+        private var isLibraryLoaded = false
+
+        init {
+            try {
+                System.loadLibrary("softether")
+                isLibraryLoaded = true
+                Log.i(TAG, "Native library 'softether' loaded successfully")
+            } catch (t: Throwable) {
+                Log.w(TAG, "Native library 'softether' not available: ${t.message}")
+                isLibraryLoaded = false
+            }
+        }
+
+        fun isNativeAvailable(): Boolean = isLibraryLoaded
+
         const val OPTION_TIMEOUT = 1
         const val OPTION_KEEPALIVE_INTERVAL = 2
         const val OPTION_MTU = 3
-        
-        // Default hub name for VPNGate servers
         const val DEFAULT_HUB_NAME = "VPN"
 
         private fun intToIpString(ip: Int): String {
@@ -379,9 +447,6 @@ class SoftEtherClient {
     }
 }
 
-/**
- * DHCP result from SoftEther tunnel
- */
 data class DhcpResult(
     val assignedIp: String,
     val subnetMask: String,
@@ -392,14 +457,8 @@ data class DhcpResult(
     val prefixLength: Int
 )
 
-/**
- * Custom exception for connection errors
- */
 class ConnectionException(message: String) : Exception(message)
 
-/**
- * SoftEther error codes matching native implementation
- */
 object SoftEtherError {
     const val ERR_NONE = 0
     const val ERR_TCP_CONNECT = 1

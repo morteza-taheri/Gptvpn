@@ -159,10 +159,16 @@ class ConnectionController(
             // Iterative connection loop
             while (reconnectAttempts.get() < MAX_RECONNECT_ATTEMPTS) {
                 try {
+                    if (!SoftEtherClient.isNativeAvailable()) {
+                        com.softether.SoftEtherVpnService.log("E", TAG, "Native SoftEther library (libsoftether.so) is not loaded.")
+                        currentState = ConnectionState.ERROR
+                        onError("Native library (libsoftether.so) is not loaded on this architecture")
+                        return
+                    }
                     performConnect()
                     // If performConnect returns, it means success (currentState == CONNECTED)
                     return
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
                     if (isCancelled.get()) {
                         com.softether.SoftEtherVpnService.log("D", TAG, "Connection cancelled, not retrying")
                         return
@@ -177,13 +183,13 @@ class ConnectionController(
                     }
                     
                     if (reconnectAttempts.incrementAndGet() < MAX_RECONNECT_ATTEMPTS) {
-                        com.softether.SoftEtherVpnService.log("W", TAG, "Connection failed, attempting retry ${reconnectAttempts.get()}/$MAX_RECONNECT_ATTEMPTS")
+                        com.softether.SoftEtherVpnService.log("W", TAG, "Connection failed (${e.message}), attempting retry ${reconnectAttempts.get()}/$MAX_RECONNECT_ATTEMPTS")
                         delay(RECONNECT_DELAY_MS)
                         // Loop continues to next attempt
                     } else {
                         com.softether.SoftEtherVpnService.log("E", TAG, "Connection failed after ${reconnectAttempts.get()} attempts", e)
                         currentState = ConnectionState.DISCONNECTED
-                        onError(e.message ?: "Unknown error")
+                        onError(e.message ?: "Unknown connection error")
                         // Stop loop
                         return
                     }
