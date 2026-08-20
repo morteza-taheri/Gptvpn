@@ -306,30 +306,54 @@ class ConnectionController(
         startNativeStateMonitor()
         // Build client info (rudpPort will be filled in by native code during RUDP init)
         val clientInfo = buildClientInfo(0)
-        val result = try {
-            client.nativeConnectWithHub(
-                nativeHandle,
-                config.serverHost,
-                config.serverPort,
-                config.username,
-                config.password,
-                hubName,
-                config.useTcp,
-                clientInfo.productName,
-                clientInfo.productVersion,
-                clientInfo.productBuild,
-                clientInfo.osName,
-                clientInfo.osVersion,
-                clientInfo.osProductId,
-                clientInfo.hostName,
-                clientInfo.clientIpAddress,
-                clientInfo.clientPort,
-                clientInfo.serverHostName,
-                clientInfo.serverIpAddress,
-                clientInfo.serverPort
-            )
-        } finally {
-            stopNativeStateMonitor()
+
+        // Try establishing direct TLS / HTTPS tunnel first (standard for SoftEther/VPNGate servers)
+        val tlsSuccess = client.establishTlsConnection(
+            config.serverHost,
+            config.serverPort,
+            hubName,
+            config.username,
+            config.password,
+            timeoutMs = config.connectTimeoutMs
+        ) { rawSocket ->
+            try {
+                service.protect(rawSocket)
+            } catch (e: Exception) {
+                com.softether.SoftEtherVpnService.log("W", TAG, "Could not protect TLS socket: ${e.message}")
+                false
+            }
+        }
+
+        val result = if (tlsSuccess) {
+            com.softether.SoftEtherVpnService.log("D", TAG, "SoftEther TLS tunnel active and secured")
+            0
+        } else {
+            com.softether.SoftEtherVpnService.log("D", TAG, "Falling back to native SoftEther connection")
+            try {
+                client.nativeConnectWithHub(
+                    nativeHandle,
+                    config.serverHost,
+                    config.serverPort,
+                    config.username,
+                    config.password,
+                    hubName,
+                    config.useTcp,
+                    clientInfo.productName,
+                    clientInfo.productVersion,
+                    clientInfo.productBuild,
+                    clientInfo.osName,
+                    clientInfo.osVersion,
+                    clientInfo.osProductId,
+                    clientInfo.hostName,
+                    clientInfo.clientIpAddress,
+                    clientInfo.clientPort,
+                    clientInfo.serverHostName,
+                    clientInfo.serverIpAddress,
+                    clientInfo.serverPort
+                )
+            } finally {
+                stopNativeStateMonitor()
+            }
         }
 
         // Check if cancelled during connection
@@ -480,6 +504,7 @@ class ConnectionController(
         com.softether.SoftEtherVpnService.log("D", TAG, "Disconnecting VPN")
         isCancelled.set(true)
         client.externalHandle = 0
+        client.closeTls()
 
         // Use mutex to prevent race with connect()
         connectionMutex.tryLock()
@@ -544,6 +569,7 @@ class ConnectionController(
         com.softether.SoftEtherVpnService.log("D", TAG, "Destroying resources (fast cleanup)")
         isCancelled.set(true)
         client.externalHandle = 0
+        client.closeTls()
 
         // Stop TunTerminal first to avoid reading from closed interface
         try {
@@ -835,24 +861,45 @@ class ConnectionController(
             client.nativeSetMaxConnection(nativeHandle, effectiveMaxConn)
 
             // Connect to server (TLS + protocol + auth + session)
-            startNativeStateMonitor()
-            val reconnectClientInfo = buildClientInfo(0)
-            val result = try {
-                client.nativeConnectWithHub(
-                    nativeHandle,
-                    config.serverHost,
-                    config.serverPort,
-                    config.username,
-                    config.password,
-                    hubName,
-                    config.useTcp,
-                    reconnectClientInfo.productName, reconnectClientInfo.productVersion, reconnectClientInfo.productBuild,
-                    reconnectClientInfo.osName, reconnectClientInfo.osVersion, reconnectClientInfo.osProductId,
-                    reconnectClientInfo.hostName, reconnectClientInfo.clientIpAddress, reconnectClientInfo.clientPort,
-                    reconnectClientInfo.serverHostName, reconnectClientInfo.serverIpAddress, reconnectClientInfo.serverPort
-                )
-            } finally {
-                stopNativeStateMonitor()
+            val tlsSuccess = client.establishTlsConnection(
+                config.serverHost,
+                config.serverPort,
+                hubName,
+                config.username,
+                config.password,
+                timeoutMs = config.connectTimeoutMs
+            ) { rawSocket ->
+                try {
+                    service.protect(rawSocket)
+                } catch (e: Exception) {
+                    com.softether.SoftEtherVpnService.log("W", TAG, "Could not protect TLS socket on reconnect: ${e.message}")
+                    false
+                }
+            }
+
+            val result = if (tlsSuccess) {
+                com.softether.SoftEtherVpnService.log("D", TAG, "Reconnected via SoftEther TLS tunnel")
+                0
+            } else {
+                startNativeStateMonitor()
+                val reconnectClientInfo = buildClientInfo(0)
+                try {
+                    client.nativeConnectWithHub(
+                        nativeHandle,
+                        config.serverHost,
+                        config.serverPort,
+                        config.username,
+                        config.password,
+                        hubName,
+                        config.useTcp,
+                        reconnectClientInfo.productName, reconnectClientInfo.productVersion, reconnectClientInfo.productBuild,
+                        reconnectClientInfo.osName, reconnectClientInfo.osVersion, reconnectClientInfo.osProductId,
+                        reconnectClientInfo.hostName, reconnectClientInfo.clientIpAddress, reconnectClientInfo.clientPort,
+                        reconnectClientInfo.serverHostName, reconnectClientInfo.serverIpAddress, reconnectClientInfo.serverPort
+                    )
+                } finally {
+                    stopNativeStateMonitor()
+                }
             }
 
             if (result != 0) {

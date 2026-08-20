@@ -19,7 +19,97 @@ class SoftEtherClient {
     @Volatile
     var externalHandle: Long = 0
 
+    // TLS Socket management for SoftEther HTTPS/SSL tunnels
+    @Volatile
+    private var sslSocket: java.net.Socket? = null
+    @Volatile
+    private var sslInputStream: java.io.InputStream? = null
+    @Volatile
+    private var sslOutputStream: java.io.OutputStream? = null
+
     fun isAvailable(): Boolean = isLibraryLoaded
+
+    fun isTlsActive(): Boolean = sslSocket != null && sslSocket?.isClosed == false
+
+    /**
+     * Establishes a direct TLS / SSL tunnel with the SoftEther server.
+     * Performs standard SSL/TLS handshake (accepting self-signed VPNGate certificates),
+     * protects the socket from VPN routing loops, and sends the initial HTTP handshake.
+     */
+    fun establishTlsConnection(
+        host: String,
+        port: Int,
+        hubName: String,
+        username: String,
+        password: String,
+        timeoutMs: Int = 15000,
+        protectCallback: ((java.net.Socket) -> Boolean)? = null
+    ): Boolean {
+        return try {
+            com.softether.SoftEtherVpnService.log("D", tag, "Establishing TLS connection to $host:$port (Hub: $hubName)")
+            val trustAllCerts = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
+                override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
+                override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
+                override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
+            })
+
+            val sslContext = javax.net.ssl.SSLContext.getInstance("TLS").apply {
+                init(null, trustAllCerts, java.security.SecureRandom())
+            }
+
+            val socket = sslContext.socketFactory.createSocket() as javax.net.ssl.SSLSocket
+            socket.tcpNoDelay = true
+            socket.keepAlive = true
+            socket.sendBufferSize = 1048576
+            socket.receiveBufferSize = 1048576
+            socket.soTimeout = timeoutMs.coerceAtLeast(10000)
+
+            // Protect the raw socket from VPN routing loops before connection
+            protectCallback?.invoke(socket)
+
+            socket.connect(java.net.InetSocketAddress(host, port), timeoutMs.coerceAtLeast(10000))
+            socket.startHandshake()
+
+            val out = socket.outputStream
+            val inStream = socket.inputStream
+
+            // SoftEther VPN initial HTTP handshake header
+            val req = "POST /vpn/vpn.cgi HTTP/1.1\r\n" +
+                    "Host: $host:$port\r\n" +
+                    "User-Agent: SoftEther VPN Client (Android)\r\n" +
+                    "Connection: Keep-Alive\r\n" +
+                    "Content-Length: 0\r\n" +
+                    "X-VPN-Hub: $hubName\r\n" +
+                    "X-VPN-Auth: $username\r\n\r\n"
+
+            out.write(req.toByteArray(Charsets.US_ASCII))
+            out.flush()
+
+            sslSocket = socket
+            sslInputStream = inStream
+            sslOutputStream = out
+            isConnected.set(true)
+            com.softether.SoftEtherVpnService.log("D", tag, "TLS connection established successfully to $host:$port")
+            true
+        } catch (e: Exception) {
+            com.softether.SoftEtherVpnService.log("W", tag, "TLS connection attempt failed: ${e.message}")
+            closeTls()
+            false
+        }
+    }
+
+    fun closeTls() {
+        try {
+            sslInputStream?.close()
+            sslOutputStream?.close()
+            sslSocket?.close()
+        } catch (e: Exception) {
+            // Ignore
+        }
+        sslInputStream = null
+        sslOutputStream = null
+        sslSocket = null
+    }
 
     /**
      * Connect to SoftEther VPN server
@@ -124,6 +214,7 @@ class SoftEtherClient {
     }
 
     fun disconnect() {
+        closeTls()
         if (!isConnected.getAndSet(false) || nativeHandle == 0L) {
             return
         }
@@ -136,12 +227,60 @@ class SoftEtherClient {
     }
 
     fun send(data: ByteArray): Int {
+        val out = sslOutputStream
+        if (out != null) {
+            return try {
+                val len = data.size
+                val frame = ByteArray(len + 2)
+                frame[0] = ((len ushr 8) and 0xFF).toByte()
+                frame[1] = (len and 0xFF).toByte()
+                System.arraycopy(data, 0, frame, 2, len)
+                synchronized(out) {
+                    out.write(frame)
+                    out.flush()
+                }
+                len
+            } catch (e: Exception) {
+                -1
+            }
+        }
         val handle = externalHandle.takeIf { it != 0L } ?: nativeHandle
         if (handle == 0L) return -1
         return nativeSend(handle, data, data.size)
     }
 
     fun receive(buffer: ByteArray): Int {
+        val inStream = sslInputStream
+        if (inStream != null) {
+            return try {
+                val b1 = inStream.read()
+                if (b1 == -1) return -1
+                val b2 = inStream.read()
+                if (b2 == -1) return -1
+                val frameLen = ((b1 and 0xFF) shl 8) or (b2 and 0xFF)
+                if (frameLen == 0) return 0 // Keepalive frame
+                if (frameLen > buffer.size) {
+                    var skipped = 0
+                    while (skipped < frameLen) {
+                        val s = inStream.skip((frameLen - skipped).toLong())
+                        if (s <= 0) break
+                        skipped += s.toInt()
+                    }
+                    return 0
+                }
+                var totalRead = 0
+                while (totalRead < frameLen) {
+                    val r = inStream.read(buffer, totalRead, frameLen - totalRead)
+                    if (r <= 0) return -1
+                    totalRead += r
+                }
+                totalRead
+            } catch (e: java.net.SocketTimeoutException) {
+                0 // Polling timeout is normal
+            } catch (e: Exception) {
+                -1
+            }
+        }
         val handle = externalHandle.takeIf { it != 0L } ?: nativeHandle
         if (handle == 0L) return -1
         return nativeReceive(handle, buffer, buffer.size)
