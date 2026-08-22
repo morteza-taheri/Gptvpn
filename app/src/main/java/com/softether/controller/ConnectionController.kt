@@ -59,6 +59,10 @@ class ConnectionController(
     private val reconnectAttempts = AtomicInteger(0)
     private val connectionMutex = Mutex()
     private var stateMonitorJob: Job? = null
+    private var sendJob: Job? = null
+    private var receiveJob: Job? = null
+    private var keepAliveJob: Job? = null
+    private var statsJob: Job? = null
 
     // Statistics
     private val bytesSent = AtomicLong(0)
@@ -517,12 +521,32 @@ class ConnectionController(
         }
     }
 
+    private fun stopDataForwarding() {
+        sendJob?.cancel()
+        sendJob = null
+        receiveJob?.cancel()
+        receiveJob = null
+        keepAliveJob?.cancel()
+        keepAliveJob = null
+        statsJob?.cancel()
+        statsJob = null
+        try {
+            tunTerminal?.stop()
+        } catch (e: Exception) {
+            com.softether.SoftEtherVpnService.log("E", TAG, "Error stopping TunTerminal", e)
+        }
+        tunTerminal = null
+    }
+
     /**
      * Disconnect VPN gracefully
      */
     fun disconnect() {
         com.softether.SoftEtherVpnService.log("D", TAG, "Disconnecting VPN")
         isCancelled.set(true)
+        stopDataForwarding()
+        stateMonitorJob?.cancel()
+        stateMonitorJob = null
         client.externalHandle = 0
         client.closeTls()
 
@@ -555,14 +579,6 @@ class ConnectionController(
             }
         }
 
-        // Stop TunTerminal first to avoid reading from closed interface
-        try {
-            tunTerminal?.stop()
-        } catch (e: Exception) {
-            com.softether.SoftEtherVpnService.log("E", TAG, "Error stopping TunTerminal", e)
-        }
-        tunTerminal = null
-        
         // Close VPN interface
         try {
             vpnInterface?.close()
@@ -570,10 +586,6 @@ class ConnectionController(
             com.softether.SoftEtherVpnService.log("E", TAG, "Error closing VPN interface", e)
         }
         vpnInterface = null
-
-        // Don't call scope.cancel() — it permanently kills the scope, making reconnect impossible.
-        // The isCancelled flag (set above) causes all data forwarding loops, keepalive,
-        // and statistics logging to exit naturally via their while-loop conditions.
 
         currentState = ConnectionState.DISCONNECTED
         com.softether.SoftEtherVpnService.log("D", TAG, "VPN disconnected. Stats: sent=${bytesSent.get()} bytes (${packetsSent.get()} pkts), " +
@@ -588,16 +600,11 @@ class ConnectionController(
     fun destroyResources() {
         com.softether.SoftEtherVpnService.log("D", TAG, "Destroying resources (fast cleanup)")
         isCancelled.set(true)
+        stopDataForwarding()
+        stateMonitorJob?.cancel()
+        stateMonitorJob = null
         client.externalHandle = 0
         client.closeTls()
-
-        // Stop TunTerminal first to avoid reading from closed interface
-        try {
-            tunTerminal?.stop()
-        } catch (e: Exception) {
-            com.softether.SoftEtherVpnService.log("E", TAG, "Error stopping TunTerminal", e)
-        }
-        tunTerminal = null
 
         // Close VPN interface
         try {
@@ -647,6 +654,8 @@ class ConnectionController(
      * This is the core data tunnel implementation
      */
     private fun startDataForwarding() {
+        stopDataForwarding()
+
         val tunInterface = vpnInterface
             ?: throw IllegalStateException("VPN interface not established")
 
@@ -667,7 +676,7 @@ class ConnectionController(
                 packetHandler.queuePacket(packet)
             } catch (e: Exception) {
                 com.softether.SoftEtherVpnService.log("E", TAG, "Error queuing packet from TunTerminal", e)
-                if (!isCancelled.get()) {
+                if (!isCancelled.get() && !isReconnecting.get()) {
                     scope.launch { attemptReconnect() }
                 }
             }
@@ -680,7 +689,7 @@ class ConnectionController(
         val isDetailedStats = devSettings.isDeveloperModeEnabled && devSettings.isPerformanceStatsEnabled
 
         // Send loop: TUN -> VPN
-        scope.launch {
+        sendJob = scope.launch {
             while (isConnected() && !isCancelled.get()) {
                 try {
                     val packet = packetHandler.pollSendQueue()
@@ -715,10 +724,10 @@ class ConnectionController(
                             performanceMonitor.nativeSendFailures.incrementAndGet()
                             performanceMonitor.jniSendFailures.incrementAndGet()
                             com.softether.SoftEtherVpnService.log("W", TAG, "Send failed: $result")
-                            if (isConnected()) {
+                            if (isConnected() && !isCancelled.get() && !isReconnecting.get()) {
                                 scope.launch { attemptReconnect() }
-                                break
                             }
+                            break
                         }
                     } else {
                         // No packets to send, brief delay
@@ -729,7 +738,7 @@ class ConnectionController(
                 } catch (e: Exception) {
                     performanceMonitor.jniSendFailures.incrementAndGet()
                     com.softether.SoftEtherVpnService.log("E", TAG, "Send loop error", e)
-                    if (isConnected()) {
+                    if (isConnected() && !isCancelled.get() && !isReconnecting.get()) {
                         scope.launch { attemptReconnect() }
                     }
                     break
@@ -738,7 +747,7 @@ class ConnectionController(
         }
 
         // Receive loop: VPN -> TUN
-        scope.launch {
+        receiveJob = scope.launch {
             val receiveBuffer = ByteArray(activeBufferSize)
             var receiveCount = 0
             while (isConnected() && !isCancelled.get()) {
@@ -818,7 +827,7 @@ class ConnectionController(
                             performanceMonitor.nativeReceiveErrors.incrementAndGet()
                             performanceMonitor.jniRecvErrors.incrementAndGet()
                             com.softether.SoftEtherVpnService.log("E", TAG, "Receive error: $result")
-                            if (isConnected() && !isCancelled.get()) {
+                            if (isConnected() && !isCancelled.get() && !isReconnecting.get()) {
                                 scope.launch { attemptReconnect() }
                             }
                             break
@@ -829,7 +838,7 @@ class ConnectionController(
                 } catch (e: Exception) {
                     performanceMonitor.jniRecvErrors.incrementAndGet()
                     com.softether.SoftEtherVpnService.log("E", TAG, "Receive loop error", e)
-                    if (isConnected() && !isCancelled.get()) {
+                    if (isConnected() && !isCancelled.get() && !isReconnecting.get()) {
                         scope.launch { attemptReconnect() }
                     }
                     break
@@ -861,16 +870,12 @@ class ConnectionController(
 
             com.softether.SoftEtherVpnService.log("W", TAG, "Attempting automatic reconnection (${reconnectAttempts.get()}/$MAX_RECONNECT_ATTEMPTS)")
 
+            // Stop all data loops and state monitor before starting cleanup
+            stopDataForwarding()
+            stopNativeStateMonitor()
+
             // Reset isCancelled so loops and subsequent operations can proceed
             isCancelled.set(false)
-
-            // Tear down old data forwarding (stop TunTerminal to avoid reading from stale fd)
-            try {
-                tunTerminal?.stop()
-            } catch (e: Exception) {
-                com.softether.SoftEtherVpnService.log("E", TAG, "Error stopping TunTerminal during reconnect", e)
-            }
-            tunTerminal = null
 
             // Close old VPN interface
             try {
@@ -1056,7 +1061,8 @@ class ConnectionController(
         keepAliveManager.setTimeout(30000L) // 30 second timeout
         keepAliveManager.start()
 
-        scope.launch {
+        keepAliveJob?.cancel()
+        keepAliveJob = scope.launch {
             while (isConnected() && !isCancelled.get()) {
                 try {
                     delay(1000) // Check every second
@@ -1068,7 +1074,9 @@ class ConnectionController(
 
                     if (keepAliveManager.isConnectionDead()) {
                         com.softether.SoftEtherVpnService.log("E", TAG, "Connection appears dead (keepalive timeout)")
-                        scope.launch { attemptReconnect() }
+                        if (isConnected() && !isCancelled.get() && !isReconnecting.get()) {
+                            scope.launch { attemptReconnect() }
+                        }
                         break
                     }
                 } catch (e: CancellationException) {
@@ -1089,7 +1097,8 @@ class ConnectionController(
             STATS_INTERVAL_MS
         }
 
-        scope.launch {
+        statsJob?.cancel()
+        statsJob = scope.launch {
             while (!isCancelled.get() &&
                 currentState != ConnectionState.DISCONNECTED &&
                 currentState != ConnectionState.ERROR

@@ -138,7 +138,14 @@ class SoftEtherClient {
             }
 
             val responseStr = String(headerBuffer, 0, headerBytesRead, Charsets.US_ASCII)
-            com.softether.SoftEtherVpnService.log("D", tag, "SoftEther HTTP handshake response: ${responseStr.lines().firstOrNull() ?: "OK"}")
+            val firstLine = responseStr.lines().firstOrNull() ?: ""
+            com.softether.SoftEtherVpnService.log("D", tag, "SoftEther HTTP handshake response: $firstLine")
+
+            if (!firstLine.contains("200")) {
+                com.softether.SoftEtherVpnService.log("W", tag, "SoftEther server rejected HTTP tunnel handshake: $firstLine")
+                closeTls()
+                return false
+            }
 
             // 7. Switch socket to 2000ms polling timeout for non-blocking packet polling
             socket.soTimeout = 2000
