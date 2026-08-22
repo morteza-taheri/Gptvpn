@@ -906,7 +906,43 @@ class ConnectionController(
                 return
             }
 
-            // Create new native connection
+            val hubName = config.virtualHub.ifEmpty { "VPN" }
+
+            // 1. Attempt TLS reconnect first
+            val tlsSuccess = try {
+                client.establishTlsConnection(
+                    host = config.serverHost,
+                    port = config.serverPort,
+                    hubName = hubName,
+                    username = config.username,
+                    password = config.password,
+                    timeoutMs = 12000,
+                    protectCallback = { socket -> service.protect(socket) }
+                )
+            } catch (e: Exception) {
+                false
+            }
+
+            if (tlsSuccess) {
+                com.softether.SoftEtherVpnService.log("I", TAG, "TLS tunnel successfully re-established to ${config.serverHost}:${config.serverPort}")
+                currentClientMac = client.getClientMac() ?: TunTerminal.DEFAULT_CLIENT_MAC
+                resolvedGatewayMac = client.getGatewayMac() ?: TunTerminal.DEFAULT_GW_MAC
+                assignedLocalIp = config.localAddress.ifEmpty { "10.211.1.2" }
+                assignedGatewayIp = "10.211.1.1"
+
+                vpnInterface = service.establishVpnInterface(config)
+                    ?: throw Exception("Failed to establish VPN interface during TLS reconnect")
+
+                currentState = ConnectionState.CONNECTED
+                isReconnecting.set(false)
+                reconnectAttempts.set(0)
+                resetTrafficPublishing(publishSnapshot = true)
+                startDataForwarding()
+                startStatisticsLogging()
+                return
+            }
+
+            // 2. Direct TLS reconnect failed; Fall back to native reconnect
             nativeHandle = client.nativeCreate()
             if (nativeHandle == 0L) {
                 throw Exception("Failed to create native connection for reconnect")
@@ -915,7 +951,6 @@ class ConnectionController(
             client.setTimeout(config.connectTimeoutMs)
 
             // Set auth type
-            val hubName = config.virtualHub.ifEmpty { "VPN" }
             val authTypeInt = when (config.authMethod) {
                 com.softether.model.AuthMethod.ANONYMOUS -> 0
                 com.softether.model.AuthMethod.PASSWORD -> 1

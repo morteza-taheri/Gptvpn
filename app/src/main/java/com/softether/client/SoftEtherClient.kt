@@ -106,15 +106,12 @@ class SoftEtherClient {
             val out = socket.outputStream
             val inStream = socket.inputStream
 
-            // 5. Send SoftEther HTTP POST handshake header
-            val targetHub = if (hubName.isBlank()) "VPN" else hubName
-            val requestHeader = "POST /vpnweb/ HTTP/1.1\r\n" +
+            // 5. Send SoftEther HTTP POST handshake header (standard SoftEther Cedar protocol endpoint)
+            val requestHeader = "POST /vpnsvc/connect.cgi HTTP/1.1\r\n" +
                 "Host: $host:$port\r\n" +
-                "User-Agent: SoftEther VPN Client (Android)\r\n" +
+                "Keep-Alive: timeout=15; max=19\r\n" +
                 "Connection: Keep-Alive\r\n" +
-                "Content-Type: application/octet-stream\r\n" +
-                "X-VPN-Hub: $targetHub\r\n" +
-                "Content-Length: 2147483647\r\n" +
+                "Content-Type: image/jpeg\r\n" +
                 "\r\n"
             out.write(requestHeader.toByteArray(Charsets.US_ASCII))
             out.flush()
@@ -142,9 +139,38 @@ class SoftEtherClient {
             com.softether.SoftEtherVpnService.log("D", tag, "SoftEther HTTP handshake response: $firstLine")
 
             if (!firstLine.contains("200")) {
-                com.softether.SoftEtherVpnService.log("W", tag, "SoftEther server rejected HTTP tunnel handshake: $firstLine")
-                closeTls()
-                return false
+                // Try fallback endpoint /vpnsvc/vpn.cgi if connect.cgi returned non-200
+                com.softether.SoftEtherVpnService.log("D", tag, "Trying fallback endpoint /vpnsvc/vpn.cgi...")
+                val fallbackHeader = "POST /vpnsvc/vpn.cgi HTTP/1.1\r\n" +
+                    "Host: $host:$port\r\n" +
+                    "Connection: Keep-Alive\r\n" +
+                    "Content-Type: image/jpeg\r\n" +
+                    "\r\n"
+                out.write(fallbackHeader.toByteArray(Charsets.US_ASCII))
+                out.flush()
+
+                headerBytesRead = 0
+                matchedEnd = false
+                while (headerBytesRead < headerBuffer.size && !matchedEnd) {
+                    val b = inStream.read()
+                    if (b == -1) break
+                    headerBuffer[headerBytesRead++] = b.toByte()
+                    if (headerBytesRead >= 4 &&
+                        headerBuffer[headerBytesRead - 4] == '\r'.code.toByte() &&
+                        headerBuffer[headerBytesRead - 3] == '\n'.code.toByte() &&
+                        headerBuffer[headerBytesRead - 2] == '\r'.code.toByte() &&
+                        headerBuffer[headerBytesRead - 1] == '\n'.code.toByte()
+                    ) {
+                        matchedEnd = true
+                    }
+                }
+                val fbLine = String(headerBuffer, 0, headerBytesRead, Charsets.US_ASCII).lines().firstOrNull() ?: ""
+                com.softether.SoftEtherVpnService.log("D", tag, "SoftEther fallback handshake response: $fbLine")
+                if (!fbLine.contains("200")) {
+                    com.softether.SoftEtherVpnService.log("W", tag, "SoftEther server rejected HTTP tunnel handshake: $fbLine")
+                    closeTls()
+                    return false
+                }
             }
 
             // 7. Switch socket to 2000ms polling timeout for non-blocking packet polling
