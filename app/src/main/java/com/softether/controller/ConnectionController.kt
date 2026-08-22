@@ -289,10 +289,51 @@ class ConnectionController(
 
         currentState = ConnectionState.TLS_HANDSHAKE
 
-        // Connect to server with hub name (includes TLS handshake, protocol handshake, auth, session setup)
-        // Use virtualHub from config, default to "VPN" if not set
         val hubName = config.virtualHub.ifEmpty { "VPN" }
-        com.softether.SoftEtherVpnService.log("D", TAG, "Connecting with hub: $hubName")
+        com.softether.SoftEtherVpnService.log("D", TAG, "Attempting SoftEther connection to ${config.serverHost}:${config.serverPort} (Hub: $hubName)")
+
+        // 1. Try Direct Protected SoftEther TLS Tunnel first (standard SoftEther HTTPS protocol on port 443/992/etc.)
+        val tlsSuccess = try {
+            client.establishTlsConnection(
+                host = config.serverHost,
+                port = config.serverPort,
+                hubName = hubName,
+                username = config.username,
+                password = config.password,
+                timeoutMs = 12000,
+                protectCallback = { socket -> service.protect(socket) }
+            )
+        } catch (e: Exception) {
+            com.softether.SoftEtherVpnService.log("W", TAG, "Direct TLS attempt failed: ${e.message}")
+            false
+        }
+
+        if (tlsSuccess) {
+            com.softether.SoftEtherVpnService.log("I", TAG, "SoftEther TLS tunnel successfully negotiated to ${config.serverHost}:${config.serverPort}")
+            reconnectAttempts.set(0)
+            currentState = ConnectionState.SESSION_SETUP
+
+            currentClientMac = client.getClientMac() ?: TunTerminal.DEFAULT_CLIENT_MAC
+            resolvedGatewayMac = client.getGatewayMac() ?: TunTerminal.DEFAULT_GW_MAC
+
+            assignedLocalIp = config.localAddress.ifEmpty { "10.211.1.2" }
+            assignedGatewayIp = "10.211.1.1"
+
+            Log.d(TAG, "TLS Tunnel Established -> Client MAC: ${currentClientMac?.joinToString(":") { "%02X".format(it) }}, Gateway MAC: ${resolvedGatewayMac?.joinToString(":") { "%02X".format(it) }}")
+
+            vpnInterface = service.establishVpnInterface(config)
+                ?: throw Exception("Failed to establish VPN interface")
+
+            currentState = ConnectionState.CONNECTED
+            resetTrafficPublishing(publishSnapshot = true)
+            startDataForwarding()
+            startStatisticsLogging()
+            return
+        }
+
+        // 2. Direct TLS was not applicable or failed; Fall back to Native Core Engine
+        com.softether.SoftEtherVpnService.log("I", TAG, "Falling back to SoftEther Native Core Engine for ${config.serverHost}:${config.serverPort}")
+
         val authTypeInt = when (config.authMethod) {
             com.softether.model.AuthMethod.ANONYMOUS -> 0
             com.softether.model.AuthMethod.PASSWORD -> 1

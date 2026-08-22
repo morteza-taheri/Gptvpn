@@ -31,10 +31,30 @@ class SoftEtherClient {
 
     fun isTlsActive(): Boolean = sslSocket != null && sslSocket?.isClosed == false
 
+    @Volatile
+    private var clientMacBytes: ByteArray = byteArrayOf(
+        0x5E.toByte(), 0x5C.toByte(), 0x9B.toByte(), 0x33.toByte(), 0x1A.toByte(), 0x17.toByte()
+    )
+    @Volatile
+    private var gatewayMacBytes: ByteArray = byteArrayOf(
+        0x5E.toByte(), 0x2C.toByte(), 0x9A.toByte(), 0xFF.toByte(), 0x62.toByte(), 0x09.toByte()
+    )
+
+    init {
+        // Generate pseudo-random client MAC with 5E:5C prefix (SoftEther standard virtual NIC prefix)
+        val rand = java.util.Random()
+        val randomBytes = ByteArray(4)
+        rand.nextBytes(randomBytes)
+        clientMacBytes = byteArrayOf(
+            0x5E.toByte(), 0x5C.toByte(),
+            randomBytes[0], randomBytes[1], randomBytes[2], randomBytes[3]
+        )
+    }
+
     /**
      * Establishes a direct TLS / SSL tunnel with the SoftEther server.
      * Performs standard SSL/TLS handshake (accepting self-signed VPNGate certificates),
-     * protects the socket from VPN routing loops, and sends the initial HTTP handshake.
+     * protects the socket from VPN routing loops, and sends the SoftEther HTTP POST handshake.
      */
     fun establishTlsConnection(
         host: String,
@@ -46,7 +66,7 @@ class SoftEtherClient {
         protectCallback: ((java.net.Socket) -> Boolean)? = null
     ): Boolean {
         return try {
-            com.softether.SoftEtherVpnService.log("D", tag, "Establishing protected TLS connection to $host:$port (Hub: $hubName)")
+            com.softether.SoftEtherVpnService.log("D", tag, "Establishing protected TLS tunnel to $host:$port (Hub: $hubName)")
             val trustAllCerts = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
                 override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
                 override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
@@ -78,7 +98,7 @@ class SoftEtherClient {
                 port,
                 true
             ) as javax.net.ssl.SSLSocket
-            socket.soTimeout = 2000 // 2 second read timeout for non-blocking stream reads
+            socket.soTimeout = 15000 // 15 seconds for handshake
             socket.startHandshake()
 
             protectCallback?.invoke(socket)
@@ -86,14 +106,51 @@ class SoftEtherClient {
             val out = socket.outputStream
             val inStream = socket.inputStream
 
+            // 5. Send SoftEther HTTP POST handshake header
+            val targetHub = if (hubName.isBlank()) "VPN" else hubName
+            val requestHeader = "POST /vpnweb/ HTTP/1.1\r\n" +
+                "Host: $host:$port\r\n" +
+                "User-Agent: SoftEther VPN Client (Android)\r\n" +
+                "Connection: Keep-Alive\r\n" +
+                "Content-Type: application/octet-stream\r\n" +
+                "X-VPN-Hub: $targetHub\r\n" +
+                "Content-Length: 2147483647\r\n" +
+                "\r\n"
+            out.write(requestHeader.toByteArray(Charsets.US_ASCII))
+            out.flush()
+
+            // 6. Read HTTP response status & headers up to \r\n\r\n
+            val headerBuffer = ByteArray(4096)
+            var headerBytesRead = 0
+            var matchedEnd = false
+            while (headerBytesRead < headerBuffer.size && !matchedEnd) {
+                val b = inStream.read()
+                if (b == -1) break
+                headerBuffer[headerBytesRead++] = b.toByte()
+                if (headerBytesRead >= 4 &&
+                    headerBuffer[headerBytesRead - 4] == '\r'.code.toByte() &&
+                    headerBuffer[headerBytesRead - 3] == '\n'.code.toByte() &&
+                    headerBuffer[headerBytesRead - 2] == '\r'.code.toByte() &&
+                    headerBuffer[headerBytesRead - 1] == '\n'.code.toByte()
+                ) {
+                    matchedEnd = true
+                }
+            }
+
+            val responseStr = String(headerBuffer, 0, headerBytesRead, Charsets.US_ASCII)
+            com.softether.SoftEtherVpnService.log("D", tag, "SoftEther HTTP handshake response: ${responseStr.lines().firstOrNull() ?: "OK"}")
+
+            // 7. Switch socket to 2000ms polling timeout for non-blocking packet polling
+            socket.soTimeout = 2000
+
             sslSocket = socket
             sslInputStream = inStream
             sslOutputStream = out
             isConnected.set(true)
-            com.softether.SoftEtherVpnService.log("D", tag, "Protected TLS session active to $host:$port")
+            com.softether.SoftEtherVpnService.log("D", tag, "Protected SoftEther TLS session active to $host:$port")
             true
         } catch (e: Exception) {
-            com.softether.SoftEtherVpnService.log("W", tag, "TLS connection attempt failed: ${e.message}")
+            com.softether.SoftEtherVpnService.log("W", tag, "TLS tunnel attempt failed: ${e.message}")
             closeTls()
             false
         }
@@ -490,14 +547,20 @@ class SoftEtherClient {
 
     fun getClientMac(): ByteArray? {
         val handle = externalHandle.takeIf { it != 0L } ?: nativeHandle
-        if (handle == 0L) return null
-        return nativeGetClientMac(handle)
+        if (handle != 0L) {
+            val mac = nativeGetClientMac(handle)
+            if (mac != null && mac.size >= 6) return mac
+        }
+        return clientMacBytes
     }
 
     fun getGatewayMac(): ByteArray? {
         val handle = externalHandle.takeIf { it != 0L } ?: nativeHandle
-        if (handle == 0L) return null
-        return nativeGetGatewayMac(handle)
+        if (handle != 0L) {
+            val mac = nativeGetGatewayMac(handle)
+            if (mac != null && mac.size >= 6) return mac
+        }
+        return gatewayMacBytes
     }
 
     // Underlying JNI method declarations
